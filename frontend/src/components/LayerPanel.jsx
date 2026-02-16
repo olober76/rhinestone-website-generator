@@ -7,9 +7,7 @@ import {
   ChevronDown,
   ChevronsUp,
   ChevronsDown,
-  Copy,
   Plus,
-  Upload,
   Image as ImageIcon,
 } from "lucide-react";
 import useStore, { createLayer } from "../store";
@@ -30,7 +28,7 @@ export default function LayerPanel() {
   const moveLayerDown = useStore((s) => s.moveLayerDown);
   const moveLayerToTop = useStore((s) => s.moveLayerToTop);
   const moveLayerToBottom = useStore((s) => s.moveLayerToBottom);
-  const duplicateLayer = useStore((s) => s.duplicateLayer);
+
   const renameLayer = useStore((s) => s.renameLayer);
   const addLayer = useStore((s) => s.addLayer);
   const updateLayer = useStore((s) => s.updateLayer);
@@ -67,15 +65,45 @@ export default function LayerPanel() {
 
         const data = await uploadImage(file, canvasWidth, canvasHeight);
 
+        // Compute tight bounding box from actual dot positions
+        const dots = data.dots;
+        let minX = Infinity,
+          minY = Infinity,
+          maxX = -Infinity,
+          maxY = -Infinity;
+        for (const d of dots) {
+          const r = d.r || 4;
+          if (d.x - r < minX) minX = d.x - r;
+          if (d.y - r < minY) minY = d.y - r;
+          if (d.x + r > maxX) maxX = d.x + r;
+          if (d.y + r > maxY) maxY = d.y + r;
+        }
+        // Fallback if no dots
+        if (!isFinite(minX)) {
+          minX = 0;
+          minY = 0;
+          maxX = canvasWidth;
+          maxY = canvasHeight;
+        }
+
+        const dotW = maxX - minX;
+        const dotH = maxY - minY;
+
         const layer = createLayer({
           sessionId: data.session_id,
-          dots: data.dots,
+          dots: dots,
           imageWidth: data.image_width,
           imageHeight: data.image_height,
-          width: canvasWidth,
-          height: canvasHeight,
-          x: 0,
-          y: 0,
+          // Bounding box matches actual dot extents
+          width: dotW,
+          height: dotH,
+          x: minX,
+          y: minY,
+          // Store offsets so the transform stays correct
+          _dotOffsetX: minX,
+          _dotOffsetY: minY,
+          _origWidth: dotW,
+          _origHeight: dotH,
         });
 
         addLayer(layer);
@@ -107,14 +135,31 @@ export default function LayerPanel() {
 
   return (
     <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="px-4 py-3 border-b border-gray-700/50 flex items-center justify-between shrink-0">
-        <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
-          Layers
-        </h2>
-        <span className="text-[10px] text-gray-600">
-          {layers.length} element{layers.length !== 1 ? "s" : ""}
-        </span>
+      {/* Header + Add Element button */}
+      <div className="px-3 py-3 border-b border-gray-700/50 shrink-0 flex flex-col gap-2">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+            Layers
+          </h2>
+          <span className="text-[10px] text-gray-600">
+            {layers.length} element{layers.length !== 1 ? "s" : ""}
+          </span>
+        </div>
+        <button
+          onClick={handleAddElement}
+          className="w-full flex items-center justify-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-xs py-2.5 rounded-lg font-medium transition"
+        >
+          <Plus className="w-3.5 h-3.5" />
+          Add Element
+        </button>
+        {/* Hidden file input */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={handleFileSelected}
+        />
       </div>
 
       {/* Layer list */}
@@ -229,16 +274,6 @@ export default function LayerPanel() {
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      duplicateLayer(layer.id);
-                    }}
-                    className="p-0.5 text-gray-500 hover:text-white transition"
-                    title="Duplicate"
-                  >
-                    <Copy className="w-3 h-3" />
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
                       pushHistory();
                       removeLayer(layer.id);
                     }}
@@ -254,11 +289,10 @@ export default function LayerPanel() {
         )}
       </div>
 
-      {/* Bottom actions */}
-      <div className="px-3 py-3 border-t border-gray-700/50 shrink-0 flex flex-col gap-2">
-        {/* Layer ordering shortcuts — only when a layer is selected */}
-        {selectedLayerId && layers.length > 1 && (
-          <div className="flex gap-1 mb-1">
+      {/* Bottom actions — layer ordering */}
+      {selectedLayerId && layers.length > 1 && (
+        <div className="px-3 py-3 border-t border-gray-700/50 shrink-0">
+          <div className="flex gap-1">
             <button
               onClick={() => {
                 pushHistory();
@@ -304,25 +338,8 @@ export default function LayerPanel() {
               Back
             </button>
           </div>
-        )}
-
-        <button
-          onClick={handleAddElement}
-          className="w-full flex items-center justify-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-xs py-2.5 rounded-lg font-medium transition"
-        >
-          <Plus className="w-3.5 h-3.5" />
-          Add Element
-        </button>
-
-        {/* Hidden file input */}
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          className="hidden"
-          onChange={handleFileSelected}
-        />
-      </div>
+        </div>
+      )}
     </div>
   );
 }

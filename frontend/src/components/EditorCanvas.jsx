@@ -348,15 +348,20 @@ export default function EditorCanvas() {
   const renderLayer = (layer) => {
     if (!layer.visible || layer.dots.length === 0) return null;
 
-    // Scale factors: dots are generated at canvas_width × canvas_height
-    // but displayed at layer.width × layer.height at position (layer.x, layer.y)
-    const scaleX = layer.width / canvasWidth;
-    const scaleY = layer.height / canvasHeight;
+    // Dots are generated at canvas-space coordinates.
+    // The bounding box (x, y, width, height) was computed from actual dot extents.
+    // We scale from dot-extent space to the current bounding box size.
+    const dotOffsetX = layer._dotOffsetX || 0;
+    const dotOffsetY = layer._dotOffsetY || 0;
+    const origW = layer._origWidth || layer.width;
+    const origH = layer._origHeight || layer.height;
+    const scaleX = layer.width / origW;
+    const scaleY = layer.height / origH;
 
     return (
       <g
         key={`dots-${layer.id}`}
-        transform={`translate(${layer.x}, ${layer.y}) scale(${scaleX}, ${scaleY})`}
+        transform={`translate(${layer.x}, ${layer.y}) scale(${scaleX}, ${scaleY}) translate(${-dotOffsetX}, ${-dotOffsetY})`}
         onMouseDown={(e) => {
           if (tool === "select") {
             e.stopPropagation();

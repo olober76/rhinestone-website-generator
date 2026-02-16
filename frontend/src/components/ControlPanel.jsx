@@ -313,7 +313,7 @@ export default function ControlPanel() {
         label="Dot Radius"
         value={params.dot_radius || 4}
         min={1}
-        max={15}
+        max={5}
         step={0.5}
         unit="px"
         onChange={(v) => setParam("dot_radius", v)}
