@@ -17,6 +17,46 @@ const backendDir = isDev
   ? path.join(__dirname, "..", "backend")
   : path.join(process.resourcesPath, "backend");
 
+// ═══════════════════════════════════════════════════════════════════════
+// File Logger — writes to halftone-studio.log in userData
+// ═══════════════════════════════════════════════════════════════════════
+
+const logDir = isDev
+  ? path.join(__dirname, "..")
+  : app.getPath("userData");
+
+const logFile = path.join(logDir, "halftone-studio.log");
+
+function initLog() {
+  try {
+    // Rotate if > 2 MB
+    if (fs.existsSync(logFile) && fs.statSync(logFile).size > 2 * 1024 * 1024) {
+      const old = logFile + ".old";
+      if (fs.existsSync(old)) fs.unlinkSync(old);
+      fs.renameSync(logFile, old);
+    }
+    const header = `\n${"=".repeat(60)}\n` +
+      `Halftone Studio — ${new Date().toISOString()}\n` +
+      `Platform: ${process.platform} ${process.arch}\n` +
+      `Electron: ${process.versions.electron}  Node: ${process.versions.node}\n` +
+      `Packaged: ${app.isPackaged}  Backend dir: ${backendDir}\n` +
+      `${"=".repeat(60)}\n`;
+    fs.appendFileSync(logFile, header);
+  } catch (e) {
+    console.error("Failed to init log file:", e.message);
+  }
+}
+
+function log(level, ...args) {
+  const ts = new Date().toISOString();
+  const msg = args.map(a => (typeof a === "string" ? a : JSON.stringify(a))).join(" ");
+  const line = `[${ts}] [${level}] ${msg}\n`;
+  console.log(line.trimEnd());
+  try {
+    fs.appendFileSync(logFile, line);
+  } catch {}
+}
+
 // ── State ──
 let mainWindow = null;
 let bridgeProcess = null;
@@ -55,9 +95,13 @@ function findPython() {
         timeout: 5000,
         windowsHide: true,
       }).trim();
-      if (ver.includes("3.")) return cmd;
+      if (ver.includes("3.")) {
+        log("INFO", `Found Python: ${cmd} → ${ver}`);
+        return cmd;
+      }
     } catch {}
   }
+  log("ERROR", "Python 3 not found on PATH");
   return null;
 }
 
@@ -78,7 +122,7 @@ function startBridge() {
     return;
   }
 
-  console.log(`[Bridge] Starting: ${pythonCmd} cli_bridge.py  (cwd: ${backendDir})`);
+  log("INFO", `Starting bridge: ${pythonCmd} cli_bridge.py  (cwd: ${backendDir})`);
 
   bridgeProcess = spawn(pythonCmd, ["cli_bridge.py"], {
     cwd: backendDir,
@@ -86,6 +130,8 @@ function startBridge() {
     stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true,
   });
+
+  log("INFO", `Bridge PID: ${bridgeProcess.pid}`);
 
   // ── stdout: line-delimited JSON, sequential response matching ──
   let buffer = "";
@@ -98,7 +144,7 @@ function startBridge() {
       try {
         const msg = JSON.parse(line);
         if (msg.status === "ready") {
-          console.log("[Bridge] Ready");
+          log("INFO", "Bridge ready");
           bridgeReady = true;
           // flush pending
           while (pendingRequests.length) {
@@ -109,14 +155,19 @@ function startBridge() {
         }
         // Resolve current sequential request
         if (currentRequest) {
-          const { resolve, reject } = currentRequest;
+          const { resolve, reject, cmdName } = currentRequest;
           currentRequest = null;
-          if (msg.ok === false) reject(new Error(msg.error || "Bridge error"));
-          else resolve(msg);
+          if (msg.ok === false) {
+            log("ERROR", `Bridge cmd [${cmdName}] failed:`, msg.error || "unknown");
+            reject(new Error(msg.error || "Bridge error"));
+          } else {
+            log("INFO", `Bridge cmd [${cmdName}] ok — keys: ${Object.keys(msg).join(", ")}`);
+            resolve(msg);
+          }
           processQueue();
         }
       } catch (e) {
-        console.error("[Bridge] Parse error:", e.message);
+        log("ERROR", "Bridge parse error:", e.message, "raw:", line.substring(0, 200));
         if (currentRequest) {
           currentRequest.reject(e);
           currentRequest = null;
@@ -127,11 +178,11 @@ function startBridge() {
   });
 
   bridgeProcess.stderr.on("data", (data) => {
-    console.log(`[Bridge:err] ${data.toString().trim()}`);
+    log("STDERR", data.toString().trim());
   });
 
   bridgeProcess.on("error", (err) => {
-    console.error("[Bridge] Spawn error:", err.message);
+    log("ERROR", "Bridge spawn error:", err.message);
     dialog.showErrorBox(
       "Backend Error",
       `Failed to start the processing engine:\n${err.message}\n\n` +
@@ -141,7 +192,7 @@ function startBridge() {
   });
 
   bridgeProcess.on("exit", (code) => {
-    console.log(`[Bridge] Exited with code ${code}`);
+    log("WARN", `Bridge exited with code ${code}`);
     bridgeProcess = null;
     bridgeReady = false;
     // reject inflight
@@ -159,22 +210,26 @@ function processQueue() {
   if (requestQueue.length === 0) return;
   currentRequest = requestQueue.shift();
   if (!bridgeProcess || !bridgeProcess.stdin.writable) {
+    log("ERROR", "Bridge not running, rejecting request");
     currentRequest.reject(new Error("Bridge not running"));
     currentRequest = null;
     processQueue();
     return;
   }
-  bridgeProcess.stdin.write(JSON.stringify(currentRequest.payload) + "\n");
+  const jsonStr = JSON.stringify(currentRequest.payload);
+  log("INFO", `Sending cmd [${currentRequest.cmdName}] (${jsonStr.length} bytes)`);
+  bridgeProcess.stdin.write(jsonStr + "\n");
 }
 
 /** Send a command to the Python bridge and await the response. */
-function sendToBridge(payload) {
+function sendToBridge(cmdName, payload) {
   return new Promise((resolve, reject) => {
+    log("INFO", `Queuing cmd [${cmdName}]`);
     if (!bridgeReady) {
-      pendingRequests.push({ payload, resolve, reject });
+      pendingRequests.push({ payload, resolve, reject, cmdName });
       return;
     }
-    requestQueue.push({ payload, resolve, reject });
+    requestQueue.push({ payload, resolve, reject, cmdName });
     processQueue();
   });
 }
@@ -227,7 +282,8 @@ function createWindow() {
 // ═══════════════════════════════════════════════════════════════════════
 
 ipcMain.handle("python:upload", async (_ev, imageB64, canvasW, canvasH) => {
-  return sendToBridge({
+  log("INFO", `IPC python:upload — image size: ${imageB64.length} chars, canvas: ${canvasW}x${canvasH}`);
+  return sendToBridge("upload", {
     cmd: "upload",
     image_b64: imageB64,
     canvas_width: canvasW,
@@ -236,11 +292,13 @@ ipcMain.handle("python:upload", async (_ev, imageB64, canvasW, canvasH) => {
 });
 
 ipcMain.handle("python:regenerate", async (_ev, paramsObj) => {
-  return sendToBridge({ cmd: "regenerate", params: paramsObj });
+  log("INFO", "IPC python:regenerate");
+  return sendToBridge("regenerate", { cmd: "regenerate", params: paramsObj });
 });
 
 ipcMain.handle("python:export", async (_ev, dots, fmt, w, h, dotShape) => {
-  return sendToBridge({
+  log("INFO", `IPC python:export — format: ${fmt}, dots: ${dots.length}`);
+  return sendToBridge("export", {
     cmd: "export",
     dots,
     format: fmt,
@@ -310,6 +368,8 @@ ipcMain.handle("shell:openDirectory", async (_ev, dirPath) => {
 // ═══════════════════════════════════════════════════════════════════════
 
 app.whenReady().then(() => {
+  initLog();
+  log("INFO", "App ready, starting bridge...");
   startBridge();
   createWindow();
   app.on("activate", () => {
@@ -319,7 +379,7 @@ app.whenReady().then(() => {
 
 app.on("window-all-closed", () => {
   if (bridgeProcess) {
-    console.log("[Bridge] Shutting down...");
+    log("INFO", "Shutting down bridge...");
     bridgeProcess.kill();
     bridgeProcess = null;
   }
@@ -327,6 +387,7 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
+  log("INFO", "Before quit — cleaning up");
   if (bridgeProcess) {
     bridgeProcess.kill();
     bridgeProcess = null;

@@ -122,3 +122,12 @@ The dev server runs at http://localhost:3000 with API proxy to the backend.
 ## License
 
 MIT
+
+
+How to use:
+
+Dev mode: npm run electron:dev (starts Vite + Electron)
+Build Windows: npm run pack:win → outputs .exe to release
+Build Mac: npm run pack:mac → outputs .dmg to release (requires macOS)
+Build Linux: npm run pack:linux → outputs .AppImage to release
+
