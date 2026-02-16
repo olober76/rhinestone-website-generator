@@ -451,9 +451,13 @@ ipcMain.handle("python:upload", async (_ev, imageB64, canvasW, canvasH) => {
   });
 });
 
-ipcMain.handle("python:regenerate", async (_ev, paramsObj) => {
-  log("INFO", "IPC python:regenerate");
-  return sendToBridge("regenerate", { cmd: "regenerate", params: paramsObj });
+ipcMain.handle("python:regenerate", async (_ev, sessionId, paramsObj) => {
+  log("INFO", `IPC python:regenerate — session: ${sessionId}`);
+  return sendToBridge("regenerate", {
+    cmd: "regenerate",
+    session_id: sessionId,
+    params: paramsObj,
+  });
 });
 
 ipcMain.handle("python:export", async (_ev, dots, fmt, w, h, dotShape) => {

@@ -63,8 +63,8 @@ class ParamsObj:
         self.canvas_height = d.get("canvas_height", 800)
 
 
-# Store the latest uploaded image in memory
-_image_store: dict = {}
+# Store uploaded images by session_id — supports multiple layers
+_image_store: dict = {}  # {session_id: raw_bytes}
 
 
 def handle_upload(msg: dict) -> dict:
@@ -78,12 +78,12 @@ def handle_upload(msg: dict) -> dict:
     params = ParamsObj({"canvas_width": cw, "canvas_height": ch})
     result = process_image(raw, params)
 
-    # Store image for later regeneration
+    # Store image by session_id for later regeneration (multi-layer)
     sid = str(uuid.uuid4())
-    _image_store["raw"] = raw
-    _image_store["session_id"] = sid
+    _image_store[sid] = raw
 
-    logger.info("upload: done — %d dots, session=%s", len(result["dots"]), sid)
+    logger.info("upload: done — %d dots, session=%s (total stored: %d)",
+                len(result["dots"]), sid, len(_image_store))
     return {
         "ok": True,
         "session_id": sid,
@@ -98,13 +98,20 @@ def handle_upload(msg: dict) -> dict:
 
 def handle_regenerate(msg: dict) -> dict:
     logger.info("regenerate: starting")
-    # Allow passing image_b64 again, or reuse stored
+    sid = msg.get("session_id")
+
+    # Allow passing image_b64 again, or reuse stored by session_id
     if "image_b64" in msg and msg["image_b64"]:
         raw = base64.b64decode(msg["image_b64"])
-        _image_store["raw"] = raw
+        if sid:
+            _image_store[sid] = raw
+    elif sid and sid in _image_store:
+        raw = _image_store[sid]
     else:
-        raw = _image_store.get("raw")
-        if not raw:
+        # Fallback: try any stored image
+        if _image_store:
+            raw = next(iter(_image_store.values()))
+        else:
             logger.warning("regenerate: no image in memory")
             return {"ok": False, "error": "No image in memory. Upload first."}
 

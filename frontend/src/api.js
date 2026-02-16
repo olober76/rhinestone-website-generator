@@ -30,8 +30,7 @@ async function electronUpload(file, canvasWidth = 800, canvasHeight = 800) {
 }
 
 async function electronRegenerate(sessionId, params) {
-  // sessionId is unused in local mode (single session in bridge)
-  return window.electronAPI.regenerateDots(params);
+  return window.electronAPI.regenerateDots(sessionId, params);
 }
 
 async function electronUpdateDots(sessionId, dots) {
@@ -39,7 +38,14 @@ async function electronUpdateDots(sessionId, dots) {
   return { status: "ok", dot_count: dots.length };
 }
 
-async function electronExport(sessionId, format, width, height, dots, dotShape) {
+async function electronExport(
+  sessionId,
+  format,
+  width,
+  height,
+  dots,
+  dotShape,
+) {
   const result = await window.electronAPI.exportPattern(
     dots,
     format,
@@ -53,7 +59,9 @@ async function electronExport(sessionId, format, width, height, dots, dotShape) 
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
 
   const mimeMap = { svg: "image/svg+xml", png: "image/png", jpg: "image/jpeg" };
-  return new Blob([bytes], { type: mimeMap[format] || "application/octet-stream" });
+  return new Blob([bytes], {
+    type: mimeMap[format] || "application/octet-stream",
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════════════

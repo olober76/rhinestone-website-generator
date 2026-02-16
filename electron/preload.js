@@ -15,8 +15,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   uploadImage: (imageB64, canvasW, canvasH) =>
     ipcRenderer.invoke("python:upload", imageB64, canvasW, canvasH),
 
-  regenerateDots: (params) =>
-    ipcRenderer.invoke("python:regenerate", params),
+  regenerateDots: (sessionId, params) =>
+    ipcRenderer.invoke("python:regenerate", sessionId, params),
 
   exportPattern: (dots, format, width, height, dotShape) =>
     ipcRenderer.invoke("python:export", dots, format, width, height, dotShape),
