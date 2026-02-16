@@ -26,7 +26,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
-    title="Halfstone Studio",
+    title="Halftone Studio",
     version="1.0.0",
     description="Convert any image/logo into halftone dot patterns with variable sizing",
 )

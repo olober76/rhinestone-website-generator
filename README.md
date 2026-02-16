@@ -1,4 +1,4 @@
-# Halfstone Studio
+# Halftone Studio
 
 A full-stack web application that converts images and logos into halftone/rhinestone dot patterns. Dots vary in size based on shadow and highlight regions, producing a faithful representation of the original artwork using only dots.
 

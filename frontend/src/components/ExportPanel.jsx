@@ -49,7 +49,7 @@ export default function ExportPanel() {
           coloredDots,
           dotShape,
         );
-        saveAs(blob, `halfstone.${format}`);
+        saveAs(blob, `halftone.${format}`);
       } catch (e) {
         useStore.getState().setError("Export failed: " + e.message);
       } finally {
@@ -107,7 +107,7 @@ export default function ExportPanel() {
     svgLines.push("</svg>");
 
     const blob = new Blob([svgLines.join("\n")], { type: "image/svg+xml" });
-    saveAs(blob, "halfstone.svg");
+    saveAs(blob, "halftone.svg");
   }, [dots, params, dotColor, bgColor, dotShape]);
 
   return (

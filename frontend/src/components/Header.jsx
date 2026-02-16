@@ -25,7 +25,7 @@ export default function Header() {
 
       <Diamond className="w-6 h-6 text-brand-500" />
       <h1 className="text-lg font-bold tracking-tight">
-        Halfstone <span className="text-brand-500">Studio</span>
+        Halftone <span className="text-brand-500">Studio</span>
       </h1>
 
       {sessionId && (
