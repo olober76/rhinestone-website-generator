@@ -146,7 +146,9 @@ async function ensureDependencies(pythonCmd) {
   } catch (e) {
     log("ERROR", "Dependency check script failed:", e.message);
     // Fallback: try installing everything
-    checkOutput = REQUIRED_PACKAGES.map((p) => `miss:${p.importName}`).join("\n");
+    checkOutput = REQUIRED_PACKAGES.map((p) => `miss:${p.importName}`).join(
+      "\n",
+    );
   }
 
   const missing = REQUIRED_PACKAGES.filter((p) =>
@@ -172,7 +174,8 @@ async function ensureDependencies(pythonCmd) {
     backgroundColor: "#1a1a2e",
     webPreferences: { nodeIntegration: false, contextIsolation: true },
   });
-  progressWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`
+  progressWin.loadURL(
+    `data:text/html;charset=utf-8,${encodeURIComponent(`
     <html><body style="margin:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
       height:100vh;background:#1a1a2e;color:#e0e0e0;font-family:system-ui;user-select:none">
       <div style="width:40px;height:40px;border:3px solid #444;border-top:3px solid #7c3aed;
@@ -182,39 +185,57 @@ async function ensureDependencies(pythonCmd) {
       <div style="font-size:11px;color:#666;margin-top:12px">This only happens once</div>
       <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
     </body></html>
-  `)}`);
+  `)}`,
+  );
 
-  // Run pip install
-  const reqFile = path.join(backendDir, "requirements-desktop.txt");
-  const useReqFile = fs.existsSync(reqFile);
-  const pipArgs = useReqFile
-    ? ["-m", "pip", "install", "--quiet", "-r", reqFile]
-    : ["-m", "pip", "install", "--quiet", ...pipNames];
-
+  // Use spawn (array args — no shell quoting issues with spaces in paths)
+  const pipArgs = ["-m", "pip", "install", "--quiet", ...pipNames];
   log("INFO", `pip command: ${pythonCmd} ${pipArgs.join(" ")}`);
 
-  try {
-    const pipOutput = execSync(`${pythonCmd} ${pipArgs.join(" ")}`, {
-      encoding: "utf-8",
-      timeout: 300000, // 5 min
-      windowsHide: true,
+  const ok = await new Promise((resolve) => {
+    const pip = spawn(pythonCmd, pipArgs, {
       cwd: backendDir,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
     });
-    log("INFO", "pip install succeeded:", pipOutput.trim().split("\n").slice(-3).join(" | "));
-  } catch (e) {
-    log("ERROR", "pip install failed:", e.message);
-    if (progressWin && !progressWin.isDestroyed()) progressWin.close();
+
+    let stderr = "";
+    pip.stdout.on("data", (d) => log("PIP", d.toString().trim()));
+    pip.stderr.on("data", (d) => {
+      const s = d.toString().trim();
+      stderr += s + "\n";
+      log("PIP:ERR", s);
+    });
+
+    pip.on("error", (err) => {
+      log("ERROR", "pip spawn error:", err.message);
+      resolve({ success: false, error: err.message });
+    });
+
+    pip.on("close", (code) => {
+      if (code === 0) {
+        log("INFO", "pip install succeeded (exit 0)");
+        resolve({ success: true });
+      } else {
+        log("ERROR", `pip install failed (exit ${code})`);
+        resolve({ success: false, error: stderr });
+      }
+    });
+  });
+
+  if (progressWin && !progressWin.isDestroyed()) progressWin.close();
+
+  if (!ok.success) {
     dialog.showErrorBox(
       "Dependency Installation Failed",
       `Could not install required Python packages:\n${pipNames.join(", ")}\n\n` +
-        `Error: ${e.stderr || e.message}\n\n` +
+        `Error: ${ok.error}\n\n` +
         "Please run manually:\n" +
         `  pip install ${pipNames.join(" ")}`,
     );
     return false;
   }
 
-  if (progressWin && !progressWin.isDestroyed()) progressWin.close();
   log("INFO", "All dependencies installed successfully");
   return true;
 }
