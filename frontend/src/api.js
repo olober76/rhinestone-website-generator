@@ -1,16 +1,70 @@
 /**
- * API helper — communicates with the FastAPI backend.
- * In Electron, the backend runs on localhost:8000 directly.
- * In web/Docker mode, we use relative /api paths (Nginx proxies).
+ * API helper.
+ *
+ * In Electron → calls Python directly via IPC (no network).
+ * In Web/Docker → uses HTTP fetch to /api (Nginx proxy).
  */
 
-const isElectron = typeof window !== "undefined" && window.electronAPI?.isElectron;
-const BASE = isElectron ? "http://127.0.0.1:8000/api" : "/api";
+const isElectron =
+  typeof window !== "undefined" && !!window.electronAPI?.isElectron;
 
-export async function uploadImage(file, canvasWidth = 800, canvasHeight = 800) {
+// ── Helpers ──
+
+/** Convert a File/Blob to a base64 string (no data-url prefix). */
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(",")[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Electron path — fully local via IPC to Python CLI bridge
+// ═══════════════════════════════════════════════════════════════════════
+
+async function electronUpload(file, canvasWidth = 800, canvasHeight = 800) {
+  const b64 = await fileToBase64(file);
+  return window.electronAPI.uploadImage(b64, canvasWidth, canvasHeight);
+}
+
+async function electronRegenerate(sessionId, params) {
+  // sessionId is unused in local mode (single session in bridge)
+  return window.electronAPI.regenerateDots(params);
+}
+
+async function electronUpdateDots(sessionId, dots) {
+  // No-op locally — dots live in frontend state only
+  return { status: "ok", dot_count: dots.length };
+}
+
+async function electronExport(sessionId, format, width, height, dots, dotShape) {
+  const result = await window.electronAPI.exportPattern(
+    dots,
+    format,
+    width,
+    height,
+    dotShape,
+  );
+  // result.data_b64 contains the file content
+  const binary = atob(result.data_b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+
+  const mimeMap = { svg: "image/svg+xml", png: "image/png", jpg: "image/jpeg" };
+  return new Blob([bytes], { type: mimeMap[format] || "application/octet-stream" });
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Web path — HTTP fetch to /api
+// ═══════════════════════════════════════════════════════════════════════
+
+const BASE = "/api";
+
+async function webUpload(file, canvasWidth = 800, canvasHeight = 800) {
   const form = new FormData();
   form.append("file", file);
-
   const res = await fetch(
     `${BASE}/upload?canvas_width=${canvasWidth}&canvas_height=${canvasHeight}`,
     { method: "POST", body: form },
@@ -19,7 +73,7 @@ export async function uploadImage(file, canvasWidth = 800, canvasHeight = 800) {
   return res.json();
 }
 
-export async function regenerateDots(sessionId, params) {
+async function webRegenerate(sessionId, params) {
   const res = await fetch(`${BASE}/regenerate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -29,7 +83,7 @@ export async function regenerateDots(sessionId, params) {
   return res.json();
 }
 
-export async function updateDots(sessionId, dots) {
+async function webUpdateDots(sessionId, dots) {
   const res = await fetch(`${BASE}/dots/update`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -39,14 +93,7 @@ export async function updateDots(sessionId, dots) {
   return res.json();
 }
 
-export async function exportPattern(
-  sessionId,
-  format,
-  width,
-  height,
-  dots = null,
-  dotShape = "circle",
-) {
+async function webExport(sessionId, format, width, height, dots, dotShape) {
   const res = await fetch(`${BASE}/export`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -62,3 +109,12 @@ export async function exportPattern(
   if (!res.ok) throw new Error(await res.text());
   return res.blob();
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// Public API — auto-selects Electron or Web path
+// ═══════════════════════════════════════════════════════════════════════
+
+export const uploadImage = isElectron ? electronUpload : webUpload;
+export const regenerateDots = isElectron ? electronRegenerate : webRegenerate;
+export const updateDots = isElectron ? electronUpdateDots : webUpdateDots;
+export const exportPattern = isElectron ? electronExport : webExport;

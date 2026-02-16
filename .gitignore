@@ -30,3 +30,5 @@ Thumbs.db
 
 # Docker (not needed for desktop)
 # docker-compose.yml kept for webapp reference
+Test/
+release/

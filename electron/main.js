@@ -1,163 +1,196 @@
 /**
- * Halfstone Studio — Electron Main Process
+ * Halftone Studio — Electron Main Process
  *
- * Spawns the Python FastAPI backend, then loads the React frontend.
- * Provides IPC for native save-directory dialog.
+ * Spawns a Python CLI bridge process (no web server) and communicates
+ * via stdin/stdout JSON messages.  Fully local — zero network calls.
  */
 
 const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
 const path = require("path");
-const { spawn } = require("child_process");
+const { spawn, execSync } = require("child_process");
 const fs = require("fs");
-const net = require("net");
 
 // ── Paths ──
 const isDev = !app.isPackaged;
-const rootDir = isDev
-  ? path.join(__dirname, "..")
-  : path.join(process.resourcesPath);
 
 const backendDir = isDev
-  ? path.join(rootDir, "backend")
-  : path.join(rootDir, "backend");
-
-const frontendDir = isDev
-  ? path.join(rootDir, "frontend", "dist")
-  : path.join(rootDir, "frontend-dist");
+  ? path.join(__dirname, "..", "backend")
+  : path.join(process.resourcesPath, "backend");
 
 // ── State ──
 let mainWindow = null;
-let backendProcess = null;
-const BACKEND_PORT = 8000;
+let bridgeProcess = null;
+let bridgeReady = false;
 
-// ── Settings store (simple JSON file) ──
+// Sequential request queue (Python is single-threaded)
+const pendingRequests = [];
+const requestQueue = [];
+let currentRequest = null;
+
+// ── Settings (simple JSON in userData) ──
 const settingsPath = path.join(app.getPath("userData"), "settings.json");
 
 function loadSettings() {
   try {
-    if (fs.existsSync(settingsPath)) {
+    if (fs.existsSync(settingsPath))
       return JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
-    }
   } catch {}
   return { saveDirectory: app.getPath("downloads") };
 }
 
-function saveSettings(settings) {
-  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+function saveSettings(s) {
+  fs.writeFileSync(settingsPath, JSON.stringify(s, null, 2));
 }
 
-// ── Find Python executable ──
+// ── Find Python 3 ──
 function findPython() {
   const candidates =
     process.platform === "win32"
       ? ["python", "python3", "py"]
       : ["python3", "python"];
-
   for (const cmd of candidates) {
     try {
-      const { execSync } = require("child_process");
-      const version = execSync(`${cmd} --version`, {
+      const ver = execSync(`${cmd} --version`, {
         encoding: "utf-8",
         timeout: 5000,
+        windowsHide: true,
       }).trim();
-      if (version.includes("3.")) return cmd;
+      if (ver.includes("3.")) return cmd;
     } catch {}
   }
   return null;
 }
 
-// ── Wait for backend to be ready ──
-function waitForBackend(port, timeout = 30000) {
-  const start = Date.now();
-  return new Promise((resolve, reject) => {
-    const check = () => {
-      const sock = new net.Socket();
-      sock.setTimeout(500);
-      sock
-        .connect(port, "127.0.0.1", () => {
-          sock.destroy();
-          resolve();
-        })
-        .on("error", () => {
-          sock.destroy();
-          if (Date.now() - start > timeout) {
-            reject(new Error("Backend did not start within timeout"));
-          } else {
-            setTimeout(check, 300);
-          }
-        })
-        .on("timeout", () => {
-          sock.destroy();
-          setTimeout(check, 300);
-        });
-    };
-    check();
-  });
-}
+// ═══════════════════════════════════════════════════════════════════════
+// Python CLI Bridge — stdin/stdout JSON protocol
+// ═══════════════════════════════════════════════════════════════════════
 
-// ── Start Python backend ──
-function startBackend() {
+function startBridge() {
   const pythonCmd = findPython();
   if (!pythonCmd) {
     dialog.showErrorBox(
       "Python Not Found",
-      "Halfstone Studio requires Python 3.9+ installed on your system.\n\n" +
-        "Please install Python from https://python.org and try again.\n\n" +
-        "Make sure to check 'Add Python to PATH' during installation."
+      "Halftone Studio requires Python 3.9+ installed on your system.\n\n" +
+        "Please install Python from https://python.org and try again.\n" +
+        "Make sure to check 'Add Python to PATH' during installation.",
     );
     app.quit();
-    return null;
+    return;
   }
 
-  console.log(`[Electron] Starting backend with: ${pythonCmd}`);
-  console.log(`[Electron] Backend directory: ${backendDir}`);
+  console.log(`[Bridge] Starting: ${pythonCmd} cli_bridge.py  (cwd: ${backendDir})`);
 
-  const proc = spawn(
-    pythonCmd,
-    ["-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", String(BACKEND_PORT)],
-    {
-      cwd: backendDir,
-      env: { ...process.env, PYTHONUNBUFFERED: "1" },
-      stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true,
+  bridgeProcess = spawn(pythonCmd, ["cli_bridge.py"], {
+    cwd: backendDir,
+    env: { ...process.env, PYTHONUNBUFFERED: "1" },
+    stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true,
+  });
+
+  // ── stdout: line-delimited JSON, sequential response matching ──
+  let buffer = "";
+  bridgeProcess.stdout.on("data", (chunk) => {
+    buffer += chunk.toString();
+    const lines = buffer.split("\n");
+    buffer = lines.pop(); // keep incomplete tail
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const msg = JSON.parse(line);
+        if (msg.status === "ready") {
+          console.log("[Bridge] Ready");
+          bridgeReady = true;
+          // flush pending
+          while (pendingRequests.length) {
+            requestQueue.push(pendingRequests.shift());
+          }
+          processQueue();
+          continue;
+        }
+        // Resolve current sequential request
+        if (currentRequest) {
+          const { resolve, reject } = currentRequest;
+          currentRequest = null;
+          if (msg.ok === false) reject(new Error(msg.error || "Bridge error"));
+          else resolve(msg);
+          processQueue();
+        }
+      } catch (e) {
+        console.error("[Bridge] Parse error:", e.message);
+        if (currentRequest) {
+          currentRequest.reject(e);
+          currentRequest = null;
+          processQueue();
+        }
+      }
     }
-  );
-
-  proc.stdout.on("data", (data) => {
-    console.log(`[Backend] ${data.toString().trim()}`);
   });
 
-  proc.stderr.on("data", (data) => {
-    console.log(`[Backend] ${data.toString().trim()}`);
+  bridgeProcess.stderr.on("data", (data) => {
+    console.log(`[Bridge:err] ${data.toString().trim()}`);
   });
 
-  proc.on("error", (err) => {
-    console.error("[Electron] Failed to start backend:", err.message);
+  bridgeProcess.on("error", (err) => {
+    console.error("[Bridge] Spawn error:", err.message);
     dialog.showErrorBox(
       "Backend Error",
-      `Failed to start the processing backend:\n${err.message}\n\n` +
-        "Make sure Python 3.9+ is installed with pip packages:\n" +
-        "fastapi, uvicorn, opencv-python-headless, numpy, scikit-image, Pillow, cairosvg"
+      `Failed to start the processing engine:\n${err.message}\n\n` +
+        "Make sure Python 3.9+ is installed with:\n" +
+        "  pip install numpy opencv-python-headless scikit-image Pillow cairosvg shapely",
     );
   });
 
-  proc.on("exit", (code) => {
-    console.log(`[Electron] Backend exited with code ${code}`);
-    backendProcess = null;
+  bridgeProcess.on("exit", (code) => {
+    console.log(`[Bridge] Exited with code ${code}`);
+    bridgeProcess = null;
+    bridgeReady = false;
+    // reject inflight
+    if (currentRequest) {
+      currentRequest.reject(new Error("Bridge exited"));
+      currentRequest = null;
+    }
+    for (const req of requestQueue) req.reject(new Error("Bridge exited"));
+    requestQueue.length = 0;
   });
-
-  return proc;
 }
 
-// ── Create main window ──
+function processQueue() {
+  if (currentRequest) return;
+  if (requestQueue.length === 0) return;
+  currentRequest = requestQueue.shift();
+  if (!bridgeProcess || !bridgeProcess.stdin.writable) {
+    currentRequest.reject(new Error("Bridge not running"));
+    currentRequest = null;
+    processQueue();
+    return;
+  }
+  bridgeProcess.stdin.write(JSON.stringify(currentRequest.payload) + "\n");
+}
+
+/** Send a command to the Python bridge and await the response. */
+function sendToBridge(payload) {
+  return new Promise((resolve, reject) => {
+    if (!bridgeReady) {
+      pendingRequests.push({ payload, resolve, reject });
+      return;
+    }
+    requestQueue.push({ payload, resolve, reject });
+    processQueue();
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Window
+// ═══════════════════════════════════════════════════════════════════════
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
     minWidth: 1000,
     minHeight: 700,
-    title: "Halfstone Studio",
-    icon: path.join(__dirname, "icon.png"),
+    title: "Halftone Studio",
+    icon: path.join(__dirname, "..", "build", "icon.png"),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -167,36 +200,60 @@ function createWindow() {
     show: false,
   });
 
-  // Remove default menu
   mainWindow.setMenuBarVisibility(false);
 
   if (isDev) {
-    // Dev mode: load from Vite dev server
     mainWindow.loadURL("http://localhost:3000");
     mainWindow.webContents.openDevTools();
   } else {
-    // Production: load built files
-    mainWindow.loadFile(path.join(frontendDir, "index.html"));
+    mainWindow.loadFile(
+      path.join(__dirname, "..", "frontend", "dist", "index.html"),
+    );
   }
 
-  mainWindow.once("ready-to-show", () => {
-    mainWindow.show();
-  });
-
+  mainWindow.once("ready-to-show", () => mainWindow.show());
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
 
-  // Open external links in system browser
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: "deny" };
   });
 }
 
-// ── IPC Handlers ──
+// ═══════════════════════════════════════════════════════════════════════
+// IPC — image processing (fully local via Python bridge, NO HTTP)
+// ═══════════════════════════════════════════════════════════════════════
 
-// Pick save directory
+ipcMain.handle("python:upload", async (_ev, imageB64, canvasW, canvasH) => {
+  return sendToBridge({
+    cmd: "upload",
+    image_b64: imageB64,
+    canvas_width: canvasW,
+    canvas_height: canvasH,
+  });
+});
+
+ipcMain.handle("python:regenerate", async (_ev, paramsObj) => {
+  return sendToBridge({ cmd: "regenerate", params: paramsObj });
+});
+
+ipcMain.handle("python:export", async (_ev, dots, fmt, w, h, dotShape) => {
+  return sendToBridge({
+    cmd: "export",
+    dots,
+    format: fmt,
+    width: w,
+    height: h,
+    dot_shape: dotShape,
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// IPC — file save dialogs
+// ═══════════════════════════════════════════════════════════════════════
+
 ipcMain.handle("dialog:pickSaveDirectory", async () => {
   const settings = loadSettings();
   const result = await dialog.showOpenDialog(mainWindow, {
@@ -212,95 +269,66 @@ ipcMain.handle("dialog:pickSaveDirectory", async () => {
   return null;
 });
 
-// Get current save directory
-ipcMain.handle("settings:getSaveDirectory", () => {
-  return loadSettings().saveDirectory;
+ipcMain.handle("settings:getSaveDirectory", () => loadSettings().saveDirectory);
+
+ipcMain.handle("file:saveToDirectory", async (_ev, filename, dataB64) => {
+  const dir = loadSettings().saveDirectory;
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  const fp = path.join(dir, filename);
+  fs.writeFileSync(fp, Buffer.from(dataB64, "base64"));
+  return fp;
 });
 
-// Save file to directory
-ipcMain.handle("file:saveToDirectory", async (_event, filename, dataB64) => {
-  const settings = loadSettings();
-  const dir = settings.saveDirectory;
-
-  // Ensure directory exists
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-
-  const filePath = path.join(dir, filename);
-  const buffer = Buffer.from(dataB64, "base64");
-  fs.writeFileSync(filePath, buffer);
-  return filePath;
-});
-
-// Save file with "Save As" dialog
-ipcMain.handle("file:saveAs", async (_event, filename, dataB64) => {
+ipcMain.handle("file:saveAs", async (_ev, filename, dataB64) => {
   const settings = loadSettings();
   const ext = path.extname(filename).slice(1);
-
   const filterMap = {
     svg: { name: "SVG Image", extensions: ["svg"] },
     png: { name: "PNG Image", extensions: ["png"] },
     jpg: { name: "JPEG Image", extensions: ["jpg", "jpeg"] },
   };
-
   const result = await dialog.showSaveDialog(mainWindow, {
     title: "Save Export",
     defaultPath: path.join(settings.saveDirectory, filename),
     filters: [filterMap[ext] || { name: "All Files", extensions: ["*"] }],
   });
-
   if (!result.canceled && result.filePath) {
-    // Update save directory to match where user chose
     settings.saveDirectory = path.dirname(result.filePath);
     saveSettings(settings);
-
-    const buffer = Buffer.from(dataB64, "base64");
-    fs.writeFileSync(result.filePath, buffer);
+    fs.writeFileSync(result.filePath, Buffer.from(dataB64, "base64"));
     return result.filePath;
   }
   return null;
 });
 
-// Open folder in file explorer
-ipcMain.handle("shell:openDirectory", async (_event, dirPath) => {
+ipcMain.handle("shell:openDirectory", async (_ev, dirPath) => {
   shell.openPath(dirPath);
 });
 
-// ── App lifecycle ──
-app.whenReady().then(async () => {
-  // Start backend
-  backendProcess = startBackend();
+// ═══════════════════════════════════════════════════════════════════════
+// App lifecycle
+// ═══════════════════════════════════════════════════════════════════════
 
-  if (backendProcess) {
-    try {
-      await waitForBackend(BACKEND_PORT);
-      console.log("[Electron] Backend is ready");
-    } catch (err) {
-      console.error("[Electron]", err.message);
-    }
-  }
-
+app.whenReady().then(() => {
+  startBridge();
   createWindow();
-
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
 
 app.on("window-all-closed", () => {
-  // Kill backend
-  if (backendProcess) {
-    console.log("[Electron] Shutting down backend...");
-    backendProcess.kill();
-    backendProcess = null;
+  if (bridgeProcess) {
+    console.log("[Bridge] Shutting down...");
+    bridgeProcess.kill();
+    bridgeProcess = null;
   }
   if (process.platform !== "darwin") app.quit();
 });
 
 app.on("before-quit", () => {
-  if (backendProcess) {
-    backendProcess.kill();
-    backendProcess = null;
+  if (bridgeProcess) {
+    bridgeProcess.kill();
+    bridgeProcess = null;
   }
 });

@@ -1,5 +1,12 @@
 import React, { useCallback, useState, useEffect } from "react";
-import { Download, FileImage, FileType, FileCode, FolderOpen, ExternalLink } from "lucide-react";
+import {
+  Download,
+  FileImage,
+  FileType,
+  FileCode,
+  FolderOpen,
+  ExternalLink,
+} from "lucide-react";
 import useStore from "../store";
 import { exportPattern } from "../api";
 import { saveAs } from "file-saver";
@@ -89,8 +96,7 @@ export default function ExportPanel() {
       const r = d.r || params.dot_radius;
       let shape = d.shape || dotShape;
       if (shape === "random")
-        shape =
-          randomShapes[Math.abs(Math.round(d.x * 7 + d.y * 13 + i)) % 4];
+        shape = randomShapes[Math.abs(Math.round(d.x * 7 + d.y * 13 + i)) % 4];
       if (shape === "diamond") {
         const pts = `${d.x},${d.y - r} ${d.x + r},${d.y} ${d.x},${d.y + r} ${d.x - r},${d.y}`;
         svgLines.push(`  <polygon points="${pts}" fill="${color}"/>`);
@@ -141,7 +147,7 @@ export default function ExportPanel() {
       try {
         setExporting(format);
         setSavedPath(null);
-        const filename = `halfstone.${format}`;
+        const filename = `halftone.${format}`;
         const blob = await buildBlob(format);
 
         if (isElectron) {
@@ -167,7 +173,7 @@ export default function ExportPanel() {
       try {
         setExporting(format);
         setSavedPath(null);
-        const filename = `halfstone.${format}`;
+        const filename = `halftone.${format}`;
         const blob = await buildBlob(format);
         const b64 = await blobToBase64(blob);
         const saved = await window.electronAPI.saveToDirectory(filename, b64);
@@ -199,9 +205,7 @@ export default function ExportPanel() {
               title={saveDir}
             >
               <FolderOpen className="w-4 h-4 shrink-0" />
-              <span className="truncate">
-                {saveDir || "Choose folder…"}
-              </span>
+              <span className="truncate">{saveDir || "Choose folder…"}</span>
             </button>
             {saveDir && (
               <button
