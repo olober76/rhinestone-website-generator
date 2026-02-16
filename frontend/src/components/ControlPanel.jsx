@@ -6,9 +6,20 @@ import { regenerateDots } from "../api";
 /**
  * Slider helper
  */
-function Slider({ label, value, min, max, step, onChange, unit = "" }) {
+function Slider({
+  label,
+  value,
+  min,
+  max,
+  step,
+  onChange,
+  unit = "",
+  disabled,
+}) {
   return (
-    <div className="flex flex-col gap-1">
+    <div
+      className={`flex flex-col gap-1 ${disabled ? "opacity-40 pointer-events-none" : ""}`}
+    >
       <div className="flex justify-between text-xs">
         <span className="text-gray-400">{label}</span>
         <span className="text-gray-300 font-mono">
@@ -24,6 +35,7 @@ function Slider({ label, value, min, max, step, onChange, unit = "" }) {
         value={value}
         onChange={(e) => onChange(parseFloat(e.target.value))}
         className="w-full"
+        disabled={disabled}
       />
     </div>
   );
@@ -85,20 +97,29 @@ const shapeIcons = {
 
 const shapeOptions = ["circle", "star", "diamond", "hexagon", "random"];
 
+/**
+ * Left sidebar — pattern controls.
+ * Operates on the currently selected layer.
+ * If no layer is selected, controls are disabled.
+ */
 export default function ControlPanel() {
-  const params = useStore((s) => s.params);
-  const setParam = useStore((s) => s.setParam);
-  const sessionId = useStore((s) => s.sessionId);
-  const setDots = useStore((s) => s.setDots);
+  const layers = useStore((s) => s.layers);
+  const selectedLayerId = useStore((s) => s.selectedLayerId);
+  const setLayerParam = useStore((s) => s.setLayerParam);
+  const updateLayer = useStore((s) => s.updateLayer);
+  const canvasWidth = useStore((s) => s.canvasWidth);
+  const canvasHeight = useStore((s) => s.canvasHeight);
   const setLoading = useStore((s) => s.setLoading);
   const setError = useStore((s) => s.setError);
   const pushHistory = useStore((s) => s.pushHistory);
-  const dotColor = useStore((s) => s.dotColor);
-  const setDotColor = useStore((s) => s.setDotColor);
   const bgColor = useStore((s) => s.bgColor);
   const setBgColor = useStore((s) => s.setBgColor);
-  const dotShape = useStore((s) => s.dotShape);
-  const setDotShape = useStore((s) => s.setDotShape);
+
+  const selectedLayer = layers.find((l) => l.id === selectedLayerId) || null;
+  const params = selectedLayer?.params || {};
+  const dotShape = selectedLayer?.dotShape || "circle";
+  const dotColor = selectedLayer?.dotColor || "#CCCCCC";
+  const noLayer = !selectedLayer;
 
   const [shapeMenuOpen, setShapeMenuOpen] = useState(false);
   const shapeMenuRef = useRef(null);
@@ -114,20 +135,54 @@ export default function ControlPanel() {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
+  const setParam = useCallback(
+    (key, value) => setLayerParam(key, value),
+    [setLayerParam],
+  );
+
+  const setDotShape = useCallback(
+    (shape) => {
+      if (!selectedLayerId) return;
+      updateLayer(selectedLayerId, { dotShape: shape });
+    },
+    [selectedLayerId, updateLayer],
+  );
+
+  const setDotColor = useCallback(
+    (color) => {
+      if (!selectedLayerId) return;
+      updateLayer(selectedLayerId, { dotColor: color });
+    },
+    [selectedLayerId, updateLayer],
+  );
+
   const handleRegenerate = useCallback(async () => {
-    if (!sessionId) return;
+    if (!selectedLayer) return;
     try {
       pushHistory();
       setLoading(true);
       setError(null);
-      const data = await regenerateDots(sessionId, params);
-      setDots(data.dots);
+      const fullParams = {
+        ...selectedLayer.params,
+        canvas_width: canvasWidth,
+        canvas_height: canvasHeight,
+      };
+      const data = await regenerateDots(selectedLayer.sessionId, fullParams);
+      updateLayer(selectedLayer.id, { dots: data.dots });
     } catch (e) {
       setError("Regeneration failed: " + e.message);
     } finally {
       setLoading(false);
     }
-  }, [sessionId, params, pushHistory, setDots, setLoading, setError]);
+  }, [
+    selectedLayer,
+    canvasWidth,
+    canvasHeight,
+    pushHistory,
+    updateLayer,
+    setLoading,
+    setError,
+  ]);
 
   return (
     <div className="p-4 flex flex-col gap-4">
@@ -137,17 +192,40 @@ export default function ControlPanel() {
         </h2>
         <button
           onClick={handleRegenerate}
-          className="flex items-center gap-1.5 bg-brand-600 hover:bg-brand-700 text-white text-xs px-3 py-1.5 rounded-lg transition"
+          disabled={noLayer}
+          className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg transition ${
+            noLayer
+              ? "bg-gray-700 text-gray-500 cursor-not-allowed"
+              : "bg-brand-600 hover:bg-brand-700 text-white"
+          }`}
         >
           <RefreshCw className="w-3.5 h-3.5" />
           Regenerate
         </button>
       </div>
 
+      {/* Selected layer indicator */}
+      {noLayer ? (
+        <div className="text-xs text-gray-600 bg-surface rounded-lg p-3 text-center">
+          Select a layer to edit its parameters
+        </div>
+      ) : (
+        <div className="text-xs text-gray-400 bg-surface/50 rounded-md px-2 py-1.5 flex items-center gap-2">
+          <div
+            className="w-2.5 h-2.5 rounded-sm"
+            style={{ backgroundColor: dotColor }}
+          />
+          Editing:{" "}
+          <span className="text-white font-medium">{selectedLayer.name}</span>
+        </div>
+      )}
+
       {/* Method selector */}
       <div className="flex flex-col gap-1">
         <span className="text-xs text-gray-400">Placement Method</span>
-        <div className="flex gap-1">
+        <div
+          className={`flex gap-1 ${noLayer ? "opacity-40 pointer-events-none" : ""}`}
+        >
           {["poisson", "grid", "contour"].map((m) => (
             <button
               key={m}
@@ -165,7 +243,10 @@ export default function ControlPanel() {
       </div>
 
       {/* Dot shape — popup menu */}
-      <div className="flex flex-col gap-1 relative" ref={shapeMenuRef}>
+      <div
+        className={`flex flex-col gap-1 relative ${noLayer ? "opacity-40 pointer-events-none" : ""}`}
+        ref={shapeMenuRef}
+      >
         <span className="text-xs text-gray-400">Dot Shape</span>
         <button
           className="flex items-center justify-between gap-2 bg-surface-lighter text-gray-300 hover:text-white text-xs py-2 px-3 rounded-md transition"
@@ -206,7 +287,9 @@ export default function ControlPanel() {
       {/* Sizing Mode */}
       <div className="flex flex-col gap-1">
         <span className="text-xs text-gray-400">Dot Sizing</span>
-        <div className="flex gap-1">
+        <div
+          className={`flex gap-1 ${noLayer ? "opacity-40 pointer-events-none" : ""}`}
+        >
           {[
             { value: "uniform", label: "Uniform" },
             { value: "variable", label: "Shadow / Highlight" },
@@ -228,69 +311,77 @@ export default function ControlPanel() {
 
       <Slider
         label="Dot Radius"
-        value={params.dot_radius}
+        value={params.dot_radius || 4}
         min={1}
         max={15}
         step={0.5}
         unit="px"
         onChange={(v) => setParam("dot_radius", v)}
+        disabled={noLayer}
       />
 
       <Slider
         label="Spacing"
-        value={params.min_spacing}
+        value={params.min_spacing || 10}
         min={3}
         max={30}
         step={1}
         unit="px"
         onChange={(v) => setParam("min_spacing", v)}
+        disabled={noLayer}
       />
 
       <Slider
         label="Density"
-        value={params.density}
+        value={params.density || 1}
         min={0.1}
         max={3}
         step={0.1}
         unit="x"
         onChange={(v) => setParam("density", v)}
+        disabled={noLayer}
       />
 
       <Slider
         label="Edge Strength"
-        value={params.edge_strength}
+        value={params.edge_strength || 0.6}
         min={0}
         max={1}
         step={0.05}
         onChange={(v) => setParam("edge_strength", v)}
+        disabled={noLayer}
       />
 
       <Slider
         label="Contrast"
-        value={params.contrast}
+        value={params.contrast || 1.2}
         min={0.1}
         max={3}
         step={0.1}
         unit="x"
         onChange={(v) => setParam("contrast", v)}
+        disabled={noLayer}
       />
 
       <Slider
         label="Rotation"
-        value={params.rotation}
+        value={params.rotation || 0}
         min={0}
         max={360}
         step={1}
         unit="°"
         onChange={(v) => setParam("rotation", v)}
+        disabled={noLayer}
       />
 
       {/* Toggles */}
-      <div className="flex flex-col gap-2">
+      <div
+        className={`flex flex-col gap-2 ${noLayer ? "opacity-40 pointer-events-none" : ""}`}
+      >
         <label className="flex items-center gap-2 text-xs text-gray-400 cursor-pointer">
           <input
             type="checkbox"
-            checked={params.invert}
+            checked={params.invert || false}
             onChange={(e) => setParam("invert", e.target.checked)}
             className="accent-brand-500"
           />
@@ -299,7 +390,7 @@ export default function ControlPanel() {
         <label className="flex items-center gap-2 text-xs text-gray-400 cursor-pointer">
           <input
             type="checkbox"
-            checked={params.use_contour_follow}
+            checked={params.use_contour_follow !== false}
             onChange={(e) => setParam("use_contour_follow", e.target.checked)}
             className="accent-brand-500"
           />
@@ -312,13 +403,16 @@ export default function ControlPanel() {
           Colors
         </h3>
         <div className="flex gap-4">
-          <label className="flex items-center gap-2 text-xs text-gray-400">
+          <label
+            className={`flex items-center gap-2 text-xs text-gray-400 ${noLayer ? "opacity-40 pointer-events-none" : ""}`}
+          >
             Dot
             <input
               type="color"
               value={dotColor}
               onChange={(e) => setDotColor(e.target.value)}
               className="w-7 h-7 rounded cursor-pointer border-0"
+              disabled={noLayer}
             />
           </label>
           <label className="flex items-center gap-2 text-xs text-gray-400">
