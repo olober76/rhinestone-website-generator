@@ -5,3 +5,6 @@ frontend/dist/
 __pycache__/
 *.pyc
 .env
+build-log*.txt
+installer/*.exe
+installer/*.pkg

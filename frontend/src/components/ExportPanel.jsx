@@ -98,10 +98,14 @@ export default function ExportPanel() {
     for (const layer of layers) {
       if (!layer.visible || layer.dots.length === 0) continue;
 
-      const scaleX = layer.width / canvasWidth;
-      const scaleY = layer.height / canvasHeight;
+      const dotOffsetX = layer._dotOffsetX || 0;
+      const dotOffsetY = layer._dotOffsetY || 0;
+      const origW = layer._origWidth || layer.width;
+      const origH = layer._origHeight || layer.height;
+      const scaleX = layer.width / origW;
+      const scaleY = layer.height / origH;
       lines.push(
-        `  <g transform="translate(${layer.x}, ${layer.y}) scale(${scaleX}, ${scaleY})" opacity="${layer.opacity}">`,
+        `  <g transform="translate(${layer.x}, ${layer.y}) scale(${scaleX}, ${scaleY}) translate(${-dotOffsetX}, ${-dotOffsetY})" opacity="${layer.opacity}">`,
       );
 
       for (let i = 0; i < layer.dots.length; i++) {
@@ -143,12 +147,16 @@ export default function ExportPanel() {
     const allDots = [];
     for (const layer of layers) {
       if (!layer.visible || layer.dots.length === 0) continue;
-      const scaleX = layer.width / canvasWidth;
-      const scaleY = layer.height / canvasHeight;
+      const dotOffsetX = layer._dotOffsetX || 0;
+      const dotOffsetY = layer._dotOffsetY || 0;
+      const origW = layer._origWidth || layer.width;
+      const origH = layer._origHeight || layer.height;
+      const scaleX = layer.width / origW;
+      const scaleY = layer.height / origH;
       for (const d of layer.dots) {
         allDots.push({
-          x: layer.x + d.x * scaleX,
-          y: layer.y + d.y * scaleY,
+          x: layer.x + (d.x - dotOffsetX) * scaleX,
+          y: layer.y + (d.y - dotOffsetY) * scaleY,
           r: (d.r || layer.params.dot_radius) * Math.max(scaleX, scaleY),
           color: d.color || layer.dotColor,
           shape: d.shape || layer.dotShape,
