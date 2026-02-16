@@ -1,8 +1,11 @@
 /**
  * API helper — communicates with the FastAPI backend.
+ * In Electron, the backend runs on localhost:8000 directly.
+ * In web/Docker mode, we use relative /api paths (Nginx proxies).
  */
 
-const BASE = "/api";
+const isElectron = typeof window !== "undefined" && window.electronAPI?.isElectron;
+const BASE = isElectron ? "http://127.0.0.1:8000/api" : "/api";
 
 export async function uploadImage(file, canvasWidth = 800, canvasHeight = 800) {
   const form = new FormData();

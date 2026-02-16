@@ -1,0 +1,87 @@
+{
+  "name": "halfstone-studio",
+  "version": "1.0.0",
+  "description": "Halfstone Studio — Convert images into rhinestone / halftone dot patterns",
+  "main": "electron/main.js",
+  "private": true,
+  "scripts": {
+    "frontend:install": "cd frontend && npm install",
+    "frontend:dev": "cd frontend && npm run dev",
+    "frontend:build": "cd frontend && npm run build",
+    "electron:dev": "concurrently \"npm run frontend:dev\" \"wait-on http://localhost:3000 && electron .\"",
+    "electron:build": "npm run frontend:build && electron-builder",
+    "pack:win": "npm run frontend:build && electron-builder --win",
+    "pack:mac": "npm run frontend:build && electron-builder --mac",
+    "pack:linux": "npm run frontend:build && electron-builder --linux",
+    "postinstall": "npm run frontend:install"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "electron": "^31.4.0",
+    "electron-builder": "^24.13.3",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.halfstone.studio",
+    "productName": "Halfstone Studio",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*",
+      "frontend/dist/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "backend",
+        "to": "backend",
+        "filter": [
+          "**/*",
+          "!__pycache__/**",
+          "!*.pyc"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Halfstone Studio"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["x64", "arm64"]
+        }
+      ],
+      "icon": "build/icon.icns",
+      "category": "public.app-category.graphics-design"
+    },
+    "dmg": {
+      "title": "Halfstone Studio",
+      "contents": [
+        { "x": 130, "y": 220 },
+        { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
+      ]
+    },
+    "linux": {
+      "target": ["AppImage"],
+      "icon": "build/icon.png",
+      "category": "Graphics"
+    }
+  }
+}

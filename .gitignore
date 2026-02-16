@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+frontend/node_modules/
+
+# Build outputs
+frontend/dist/
+dist/
+release/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+backend/__pycache__/
+backend/processing/__pycache__/
+*.egg-info/
+.venv/
+venv/
+
+# Electron
+.vite/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Docker (not needed for desktop)
+# docker-compose.yml kept for webapp reference
