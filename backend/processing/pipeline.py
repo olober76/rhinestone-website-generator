@@ -12,6 +12,7 @@ KEY DESIGN PRINCIPLE:
 import cv2
 import numpy as np
 import logging
+import random
 import time
 
 from .dot_placement import (
@@ -186,6 +187,13 @@ def process_image(raw: bytes, params) -> dict:
         edge_dots = place_dots_contour_outline(mask, density, params)
         dots = _merge_dots(edge_dots, dots, min_dist=params.min_spacing * 0.65)
         logger.info(f"Contour merge: {len(dots)} total dots in {time.time() - t2:.2f}s")
+
+    # Assign random shapes when dot_shape == "random"
+    dot_shape = getattr(params, 'dot_shape', 'circle')
+    if dot_shape == "random":
+        shape_choices = ["circle", "star", "diamond", "hexagon"]
+        for d in dots:
+            d["shape"] = random.choice(shape_choices)
 
     logger.info(f"Total processing: {len(dots)} dots in {time.time() - t0:.2f}s")
 

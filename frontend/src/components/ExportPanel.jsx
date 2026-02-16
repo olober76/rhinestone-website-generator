@@ -65,15 +65,43 @@ export default function ExportPanel() {
       `<svg xmlns="http://www.w3.org/2000/svg" width="${params.canvas_width}" height="${params.canvas_height}" viewBox="0 0 ${params.canvas_width} ${params.canvas_height}">`,
       `  <rect width="${params.canvas_width}" height="${params.canvas_height}" fill="${bgColor}"/>`,
     ];
-    dots.forEach((d) => {
+
+    const starPts = (cx, cy, r) => {
+      const outer = r,
+        inner = r * 0.4;
+      return Array.from({ length: 10 }, (_, i) => {
+        const a = -Math.PI / 2 + (i * Math.PI) / 5;
+        const rd = i % 2 === 0 ? outer : inner;
+        return `${cx + rd * Math.cos(a)},${cy + rd * Math.sin(a)}`;
+      }).join(" ");
+    };
+    const hexPts = (cx, cy, r) =>
+      Array.from({ length: 6 }, (_, i) => {
+        const a = -Math.PI / 2 + (i * Math.PI) / 3;
+        return `${cx + r * Math.cos(a)},${cy + r * Math.sin(a)}`;
+      }).join(" ");
+
+    const randomShapes = ["circle", "star", "diamond", "hexagon"];
+    dots.forEach((d, i) => {
       const color = d.color || dotColor;
       const r = d.r || params.dot_radius;
-      const shape = d.shape || dotShape;
+      let shape = d.shape || dotShape;
+      if (shape === "random") shape = randomShapes[Math.abs(Math.round(d.x * 7 + d.y * 13 + i)) % 4];
       if (shape === "diamond") {
         const pts = `${d.x},${d.y - r} ${d.x + r},${d.y} ${d.x},${d.y + r} ${d.x - r},${d.y}`;
         svgLines.push(`  <polygon points="${pts}" fill="${color}"/>`);
+      } else if (shape === "star") {
+        svgLines.push(
+          `  <polygon points="${starPts(d.x, d.y, r)}" fill="${color}"/>`,
+        );
+      } else if (shape === "hexagon") {
+        svgLines.push(
+          `  <polygon points="${hexPts(d.x, d.y, r)}" fill="${color}"/>`,
+        );
       } else {
-        svgLines.push(`  <circle cx="${d.x}" cy="${d.y}" r="${r}" fill="${color}"/>`);
+        svgLines.push(
+          `  <circle cx="${d.x}" cy="${d.y}" r="${r}" fill="${color}"/>`,
+        );
       }
     });
     svgLines.push("</svg>");

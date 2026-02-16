@@ -1,12 +1,5 @@
 import React from "react";
-import {
-  MousePointer2,
-  Plus,
-  Trash2,
-  Undo2,
-  ZoomIn,
-  ZoomOut,
-} from "lucide-react";
+import { Trash2, Undo2, ZoomIn, ZoomOut } from "lucide-react";
 import useStore from "../store";
 
 const btnClass = (active) =>
@@ -17,8 +10,6 @@ const btnClass = (active) =>
   }`;
 
 export default function Toolbar() {
-  const tool = useStore((s) => s.tool);
-  const setTool = useStore((s) => s.setTool);
   const zoom = useStore((s) => s.zoom);
   const setZoom = useStore((s) => s.setZoom);
   const undo = useStore((s) => s.undo);
@@ -26,28 +17,11 @@ export default function Toolbar() {
 
   return (
     <div className="h-11 bg-surface-light border-b border-gray-700/50 flex items-center px-4 gap-2 shrink-0">
-      {/* Tool selection */}
-      <button
-        className={btnClass(tool === "select")}
-        onClick={() => setTool("select")}
-        title="Select / Move dots"
-      >
-        <MousePointer2 className="w-4 h-4" />
-      </button>
-      <button
-        className={btnClass(tool === "add")}
-        onClick={() => setTool("add")}
-        title="Add dot"
-      >
-        <Plus className="w-4 h-4" />
-      </button>
-      <button
-        className={btnClass(tool === "delete")}
-        onClick={() => setTool("delete")}
-        title="Delete dot"
-      >
+      {/* Delete mode indicator */}
+      <div className={btnClass(true)} title="Click dots to delete">
         <Trash2 className="w-4 h-4" />
-      </button>
+      </div>
+      <span className="text-xs text-gray-500">Click dot to delete</span>
 
       <div className="w-px h-6 bg-gray-700 mx-1" />
 

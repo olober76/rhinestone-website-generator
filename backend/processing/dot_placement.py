@@ -92,15 +92,17 @@ def remove_overlaps_spatial(dots: list, min_dist: float) -> list:
 # Helpers — size & spacing from density
 # ======================================================================
 
-def _dot_radius(base_r: float, density: float, dens_mult: float) -> float:
+def _dot_radius(base_r: float, density: float, dens_mult: float, sizing_mode: str = "variable") -> float:
     """
     Compute dot radius from density value (0..1).
-    Shadow/dark areas (density ~1.0) → large dots.
-    Highlight/light areas (density ~0.0) → small or no dots.
-
-    Returns radius in range [base_r * 0.2, base_r * 2.5] modulated by density.
-    This wide range is essential for representing shadow & highlight.
+    If sizing_mode == "uniform", always returns base_r.
+    If sizing_mode == "variable":
+      Shadow/dark areas (density ~1.0) → large dots.
+      Highlight/light areas (density ~0.0) → small or no dots.
     """
+    if sizing_mode == "uniform":
+        return round(base_r, 2)
+
     min_factor = 0.2
     max_factor = 1.0 + dens_mult * 0.8  # density slider controls max size
     max_factor = min(max_factor, 2.5)
@@ -136,6 +138,7 @@ def place_dots_poisson(
     base_r      = params.dot_radius
     min_spacing = params.min_spacing
     dens_mult   = params.density
+    sizing_mode = getattr(params, 'sizing_mode', 'variable')
     k = 20  # candidates per active point
 
     # Use minimum possible spacing for the grid cell size
@@ -215,7 +218,7 @@ def place_dots_poisson(
                     break
 
             if not too_close:
-                r = _dot_radius(base_r, d, dens_mult)
+                r = _dot_radius(base_r, d, dens_mult, sizing_mode)
                 _add(nx, ny, r)
                 found = True
                 break
@@ -245,6 +248,7 @@ def place_dots_grid(
     base_r   = params.dot_radius
     spacing  = params.min_spacing
     dens_mult = params.density
+    sizing_mode = getattr(params, 'sizing_mode', 'variable')
 
     dots: List[Dict] = []
     y = spacing / 2
@@ -256,7 +260,7 @@ def place_dots_grid(
         while x < w:
             if _in_mask(mask, x, y):
                 d = _density_at(density_map, x, y)
-                r = _dot_radius(base_r, d, dens_mult)
+                r = _dot_radius(base_r, d, dens_mult, sizing_mode)
                 dots.append({
                     "x": round(x, 2),
                     "y": round(y, 2),
@@ -292,6 +296,7 @@ def place_dots_contour_outline(
     base_r   = params.dot_radius
     spacing  = params.min_spacing
     dens_mult = params.density
+    sizing_mode = getattr(params, 'sizing_mode', 'variable')
 
     dots: List[Dict] = []
 
@@ -337,7 +342,7 @@ def place_dots_contour_outline(
                 if accum >= spacing:
                     px, py = float(p1[0]), float(p1[1])
                     d = _density_at(density_map, px, py)
-                    r = _dot_radius(base_r, d, dens_mult)
+                    r = _dot_radius(base_r, d, dens_mult, sizing_mode)
 
                     dots.append({
                         "x": round(px, 2),

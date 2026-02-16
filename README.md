@@ -5,14 +5,16 @@ A full-stack web application that converts images and logos into halftone/rhines
 ## Features
 
 - **Image to Dot Pattern** — Upload any image (PNG, JPG, SVG, BMP, WEBP) and instantly generate a halftone dot pattern
-- **Variable Dot Sizing** — Dark/shadow areas produce larger dots, light/highlight areas produce smaller dots, preserving the visual depth of the original image
-- **Dot Shapes** — Choose between circle and diamond dot shapes
+- **Dot Sizing Modes**
+  - **Uniform** — All dots are the same size (default)
+  - **Shadow / Highlight** — Dark areas produce larger dots, light areas produce smaller dots, preserving visual depth
+- **Dot Shapes** — Choose from circle, star, diamond, hexagon, or random (mixes all shapes)
 - **Three Placement Methods**
   - **Poisson** — Organic, density-aware spacing (default)
   - **Grid** — Uniform hex-offset grid with density modulation
   - **Contour** — Concentric contour rings following the shape outline
-- **Interactive Editor** — Select, move, add, and delete individual dots on an SVG canvas
-- **Adjustable Parameters** — Dot radius, spacing, density, edge strength, contrast, rotation
+- **Click-to-Delete Editing** — Click any dot on the canvas to remove it
+- **Adjustable Parameters** — Dot radius (1–15px), spacing (3–30px), density, edge strength, contrast, rotation
 - **Contour-Following** — Optional edge dots that trace the outline of the shape
 - **Pan & Zoom** — Scroll to zoom (up to 500%), click-drag to pan the canvas
 - **Undo History** — Revert edits with undo support

@@ -14,6 +14,7 @@ const defaultParams = {
   invert: false,
   use_contour_follow: true,
   dot_shape: "circle",
+  sizing_mode: "uniform",
   canvas_width: 800,
   canvas_height: 800,
 };
@@ -47,11 +48,11 @@ const useStore = create((set, get) => ({
   setError: (e) => set({ error: e }),
 
   // Tool mode
-  tool: "select", // select | add | delete
+  tool: "delete", // delete (click to remove)
   setTool: (t) => set({ tool: t }),
 
   // Dot shape
-  dotShape: "circle", // circle | diamond
+  dotShape: "circle", // circle | diamond | star | hexagon | random
   setDotShape: (s) => set({ dotShape: s }),
 
   // Dot color

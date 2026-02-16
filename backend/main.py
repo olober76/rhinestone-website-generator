@@ -47,8 +47,8 @@ sessions: dict = {}
 # ---------------------------------------------------------------------------
 
 class DotParams(BaseModel):
-    dot_radius: float = Field(4.0, ge=1, le=50, description="Radius of each dot")
-    min_spacing: float = Field(10.0, ge=3, le=100, description="Minimum gap between dots")
+    dot_radius: float = Field(4.0, ge=1, le=15, description="Radius of each dot")
+    min_spacing: float = Field(10.0, ge=3, le=30, description="Minimum gap between dots")
     density: float = Field(1.0, ge=0.1, le=5.0, description="Density multiplier")
     method: str = Field("poisson", description="Placement method: poisson | grid | contour")
     edge_strength: float = Field(0.6, ge=0.0, le=1.0, description="How strongly dots follow contours")
@@ -56,7 +56,8 @@ class DotParams(BaseModel):
     contrast: float = Field(1.2, ge=0.1, le=3.0, description="Contrast adjustment")
     invert: bool = Field(False, description="Invert brightness mapping")
     use_contour_follow: bool = Field(True, description="Enable contour-following placement")
-    dot_shape: str = Field("circle", description="Dot shape: circle | diamond")
+    dot_shape: str = Field("circle", description="Dot shape: circle | diamond | star | hexagon | random")
+    sizing_mode: str = Field("uniform", description="Sizing mode: uniform | variable")
     canvas_width: int = Field(800, ge=100, le=4000)
     canvas_height: int = Field(800, ge=100, le=4000)
 
@@ -72,7 +73,7 @@ class ExportRequest(BaseModel):
     width: int = Field(800, ge=100, le=4000)
     height: int = Field(800, ge=100, le=4000)
     dots: Optional[list] = Field(None, description="Optional: edited dot array from frontend")
-    dot_shape: str = Field("circle", description="Dot shape: circle | diamond")
+    dot_shape: str = Field("circle", description="Dot shape: circle | diamond | star | hexagon | random")
 
 
 class DotEditRequest(BaseModel):

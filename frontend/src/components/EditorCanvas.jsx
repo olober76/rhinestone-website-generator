@@ -1,24 +1,46 @@
 import React, { useRef, useEffect, useCallback, useState } from "react";
 import useStore from "../store";
 
+/* ── Shape helper: compute polygon points string ── */
+function starPoints(cx, cy, r) {
+  const outer = r,
+    inner = r * 0.4;
+  const pts = [];
+  for (let i = 0; i < 10; i++) {
+    const angle = -Math.PI / 2 + (i * Math.PI) / 5;
+    const rad = i % 2 === 0 ? outer : inner;
+    pts.push(`${cx + rad * Math.cos(angle)},${cy + rad * Math.sin(angle)}`);
+  }
+  return pts.join(" ");
+}
+
+function hexPoints(cx, cy, r) {
+  const pts = [];
+  for (let i = 0; i < 6; i++) {
+    const angle = -Math.PI / 2 + (i * Math.PI) / 3;
+    pts.push(`${cx + r * Math.cos(angle)},${cy + r * Math.sin(angle)}`);
+  }
+  return pts.join(" ");
+}
+
+function diamondPoints(cx, cy, r) {
+  return `${cx},${cy - r} ${cx + r},${cy} ${cx},${cy + r} ${cx - r},${cy}`;
+}
+
 /**
  * Main SVG-based editor canvas.
- * Each dot is rendered as an editable <circle>.
+ * Click a dot to delete it. Drag on canvas to pan. Scroll to zoom.
  */
 export default function EditorCanvas() {
   const svgRef = useRef(null);
   const dots = useStore((s) => s.dots);
   const setDots = useStore((s) => s.setDots);
   const params = useStore((s) => s.params);
-  const tool = useStore((s) => s.tool);
   const dotColor = useStore((s) => s.dotColor);
   const bgColor = useStore((s) => s.bgColor);
   const zoom = useStore((s) => s.zoom);
-  const selectedDot = useStore((s) => s.selectedDot);
-  const setSelectedDot = useStore((s) => s.setSelectedDot);
   const pushHistory = useStore((s) => s.pushHistory);
 
-  const [dragging, setDragging] = useState(null); // index of dot being dragged
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
@@ -26,104 +48,47 @@ export default function EditorCanvas() {
   const cw = params.canvas_width;
   const ch = params.canvas_height;
 
-  // ----- Dot interactions -----
+  // ----- Click dot to delete -----
   const handleDotMouseDown = useCallback(
     (e, idx) => {
       e.stopPropagation();
-      if (tool === "delete") {
-        pushHistory();
-        const next = [...dots];
-        next.splice(idx, 1);
-        setDots(next);
-        setSelectedDot(null);
-      } else if (tool === "select") {
-        setSelectedDot(idx);
-        setDragging(idx);
-      }
+      pushHistory();
+      const next = [...dots];
+      next.splice(idx, 1);
+      setDots(next);
     },
-    [tool, dots, pushHistory, setDots, setSelectedDot],
+    [dots, pushHistory, setDots],
   );
 
+  // ----- Canvas pan -----
   const handleSvgMouseDown = useCallback(
     (e) => {
-      if (tool === "add") {
-        const svg = svgRef.current;
-        if (!svg) return;
-        const pt = svg.createSVGPoint();
-        pt.x = e.clientX;
-        pt.y = e.clientY;
-        const svgPt = pt.matrixTransform(svg.getScreenCTM().inverse());
-
-        pushHistory();
-        setDots([
-          ...dots,
-          {
-            x: Math.round(svgPt.x * 100) / 100,
-            y: Math.round(svgPt.y * 100) / 100,
-            r: params.dot_radius,
-            color: dotColor,
-          },
-        ]);
-      } else if (tool === "select") {
-        setSelectedDot(null);
-        // Start panning
-        setIsPanning(true);
-        setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
-      }
+      setIsPanning(true);
+      setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
     },
-    [tool, dots, params.dot_radius, dotColor, pushHistory, setDots, pan],
+    [pan],
   );
 
   const handleMouseMove = useCallback(
     (e) => {
-      if (dragging !== null) {
-        const svg = svgRef.current;
-        if (!svg) return;
-        const pt = svg.createSVGPoint();
-        pt.x = e.clientX;
-        pt.y = e.clientY;
-        const svgPt = pt.matrixTransform(svg.getScreenCTM().inverse());
-
-        const next = [...dots];
-        next[dragging] = {
-          ...next[dragging],
-          x: Math.round(svgPt.x * 100) / 100,
-          y: Math.round(svgPt.y * 100) / 100,
-        };
-        setDots(next);
-      } else if (isPanning) {
+      if (isPanning) {
         setPan({
           x: e.clientX - panStart.x,
           y: e.clientY - panStart.y,
         });
       }
     },
-    [dragging, dots, setDots, isPanning, panStart],
+    [isPanning, panStart],
   );
 
   const handleMouseUp = useCallback(() => {
-    if (dragging !== null) {
-      setDragging(null);
-    }
     setIsPanning(false);
-  }, [dragging]);
+  }, []);
 
   // Zoom with scroll — only on canvas wrapper
   const canvasWrapperRef = useRef(null);
-  const handleWheel = useCallback(
-    (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const delta = e.deltaY > 0 ? -0.1 : 0.1;
-      const next = Math.max(0.1, Math.min(5, zoom + delta));
-      useStore.getState().setZoom(next);
-    },
-    [zoom],
-  );
 
   useEffect(() => {
-    // Attach to the overflow scroll container (parent of canvas-container)
-    // so wheel events anywhere in the canvas area are captured
     const el = canvasWrapperRef.current?.parentElement;
     if (!el) return;
     const handler = (e) => {
@@ -140,20 +105,50 @@ export default function EditorCanvas() {
 
   const dotShape = useStore((s) => s.dotShape);
 
+  /* ── Resolve "random" to a deterministic shape per dot ── */
+  const randomShapes = ["circle", "star", "diamond", "hexagon"];
+  const resolveShape = (d, i) => {
+    const raw = d.shape || dotShape;
+    if (raw === "random") return randomShapes[Math.abs(Math.round(d.x * 7 + d.y * 13 + i)) % 4];
+    return raw;
+  };
+
+  /* ── Render a single dot by shape ── */
+  const renderDot = (d, i) => {
+    const r = d.r || params.dot_radius;
+    const fill = d.color || dotColor;
+    const shape = resolveShape(d, i);
+
+    const common = {
+      key: i,
+      className: "dot-circle",
+      fill,
+      stroke: "none",
+      strokeWidth: 0,
+      opacity: 0.9,
+      style: { cursor: "pointer" },
+      onMouseDown: (e) => handleDotMouseDown(e, i),
+    };
+
+    switch (shape) {
+      case "diamond":
+        return <polygon {...common} points={diamondPoints(d.x, d.y, r)} />;
+      case "star":
+        return <polygon {...common} points={starPoints(d.x, d.y, r)} />;
+      case "hexagon":
+        return <polygon {...common} points={hexPoints(d.x, d.y, r)} />;
+      default: // circle
+        return <circle {...common} cx={d.x} cy={d.y} r={r} />;
+    }
+  };
+
   return (
     <div
       ref={canvasWrapperRef}
       className="canvas-container"
       style={{
         transform: `translate(${pan.x}px, ${pan.y}px)`,
-        cursor:
-          tool === "add"
-            ? "crosshair"
-            : tool === "delete"
-              ? "not-allowed"
-              : isPanning
-                ? "grabbing"
-                : "grab",
+        cursor: isPanning ? "grabbing" : "grab",
       }}
     >
       <svg
@@ -170,43 +165,7 @@ export default function EditorCanvas() {
         <rect width={cw} height={ch} fill={bgColor} />
 
         {/* Dots */}
-        {dots.map((d, i) => {
-          const r = d.r || params.dot_radius;
-          const fill = d.color || dotColor;
-          const stroke = selectedDot === i ? "#FFD700" : "none";
-          const sw = selectedDot === i ? 1.5 : 0;
-          const shape = d.shape || dotShape;
-
-          if (shape === "diamond") {
-            const pts = `${d.x},${d.y - r} ${d.x + r},${d.y} ${d.x},${d.y + r} ${d.x - r},${d.y}`;
-            return (
-              <polygon
-                key={i}
-                className="dot-circle"
-                points={pts}
-                fill={fill}
-                stroke={stroke}
-                strokeWidth={sw}
-                opacity={0.9}
-                onMouseDown={(e) => handleDotMouseDown(e, i)}
-              />
-            );
-          }
-          return (
-            <circle
-              key={i}
-              className="dot-circle"
-              cx={d.x}
-              cy={d.y}
-              r={r}
-              fill={fill}
-              stroke={stroke}
-              strokeWidth={sw}
-              opacity={0.9}
-              onMouseDown={(e) => handleDotMouseDown(e, i)}
-            />
-          );
-        })}
+        {dots.map((d, i) => renderDot(d, i))}
       </svg>
     </div>
   );

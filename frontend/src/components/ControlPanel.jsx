@@ -1,5 +1,5 @@
-import React, { useCallback } from "react";
-import { RefreshCw } from "lucide-react";
+import React, { useCallback, useState, useRef, useEffect } from "react";
+import { RefreshCw, ChevronDown } from "lucide-react";
 import useStore from "../store";
 import { regenerateDots } from "../api";
 
@@ -29,6 +29,62 @@ function Slider({ label, value, min, max, step, onChange, unit = "" }) {
   );
 }
 
+/* ── Shape icons ── */
+const shapeIcons = {
+  circle: (
+    <svg width="14" height="14" viewBox="0 0 14 14">
+      <circle cx="7" cy="7" r="6" fill="currentColor" />
+    </svg>
+  ),
+  diamond: (
+    <svg width="14" height="14" viewBox="0 0 14 14">
+      <polygon points="7,1 13,7 7,13 1,7" fill="currentColor" />
+    </svg>
+  ),
+  star: (
+    <svg width="14" height="14" viewBox="0 0 14 14">
+      <polygon
+        points={(() => {
+          const cx = 7,
+            cy = 7,
+            outer = 6,
+            inner = 2.4;
+          return Array.from({ length: 10 }, (_, i) => {
+            const a = -Math.PI / 2 + (i * Math.PI) / 5;
+            const r = i % 2 === 0 ? outer : inner;
+            return `${cx + r * Math.cos(a)},${cy + r * Math.sin(a)}`;
+          }).join(" ");
+        })()}
+        fill="currentColor"
+      />
+    </svg>
+  ),
+  hexagon: (
+    <svg width="14" height="14" viewBox="0 0 14 14">
+      <polygon
+        points={(() => {
+          const cx = 7,
+            cy = 7,
+            r = 6;
+          return Array.from({ length: 6 }, (_, i) => {
+            const a = -Math.PI / 2 + (i * Math.PI) / 3;
+            return `${cx + r * Math.cos(a)},${cy + r * Math.sin(a)}`;
+          }).join(" ");
+        })()}
+        fill="currentColor"
+      />
+    </svg>
+  ),
+  random: (
+    <svg width="14" height="14" viewBox="0 0 14 14">
+      <circle cx="4" cy="4" r="3" fill="currentColor" />
+      <polygon points="11,4 14,8 11,12 8,8" fill="currentColor" opacity="0.7" />
+    </svg>
+  ),
+};
+
+const shapeOptions = ["circle", "star", "diamond", "hexagon", "random"];
+
 export default function ControlPanel() {
   const params = useStore((s) => s.params);
   const setParam = useStore((s) => s.setParam);
@@ -43,6 +99,20 @@ export default function ControlPanel() {
   const setBgColor = useStore((s) => s.setBgColor);
   const dotShape = useStore((s) => s.dotShape);
   const setDotShape = useStore((s) => s.setDotShape);
+
+  const [shapeMenuOpen, setShapeMenuOpen] = useState(false);
+  const shapeMenuRef = useRef(null);
+
+  // Close popup on outside click
+  useEffect(() => {
+    const handler = (e) => {
+      if (shapeMenuRef.current && !shapeMenuRef.current.contains(e.target)) {
+        setShapeMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
 
   const handleRegenerate = useCallback(async () => {
     if (!sessionId) return;
@@ -94,30 +164,63 @@ export default function ControlPanel() {
         </div>
       </div>
 
-      {/* Dot shape selector */}
-      <div className="flex flex-col gap-1">
+      {/* Dot shape — popup menu */}
+      <div className="flex flex-col gap-1 relative" ref={shapeMenuRef}>
         <span className="text-xs text-gray-400">Dot Shape</span>
+        <button
+          className="flex items-center justify-between gap-2 bg-surface-lighter text-gray-300 hover:text-white text-xs py-2 px-3 rounded-md transition"
+          onClick={() => setShapeMenuOpen((v) => !v)}
+        >
+          <span className="flex items-center gap-2 capitalize">
+            {shapeIcons[dotShape]}
+            {dotShape}
+          </span>
+          <ChevronDown
+            className={`w-3.5 h-3.5 transition-transform ${shapeMenuOpen ? "rotate-180" : ""}`}
+          />
+        </button>
+        {shapeMenuOpen && (
+          <div className="absolute top-full left-0 right-0 mt-1 bg-surface-light border border-gray-700 rounded-lg shadow-xl z-50 overflow-hidden">
+            {shapeOptions.map((s) => (
+              <button
+                key={s}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 text-xs capitalize transition ${
+                  dotShape === s
+                    ? "bg-brand-600 text-white"
+                    : "text-gray-400 hover:bg-surface-lighter hover:text-white"
+                }`}
+                onClick={() => {
+                  setDotShape(s);
+                  setParam("dot_shape", s);
+                  setShapeMenuOpen(false);
+                }}
+              >
+                {shapeIcons[s]}
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Sizing Mode */}
+      <div className="flex flex-col gap-1">
+        <span className="text-xs text-gray-400">Dot Sizing</span>
         <div className="flex gap-1">
-          {["circle", "diamond"].map((s) => (
+          {[
+            { value: "uniform", label: "Uniform" },
+            { value: "variable", label: "Shadow / Highlight" },
+          ].map(({ value, label }) => (
             <button
-              key={s}
-              className={`flex-1 text-xs py-1.5 rounded-md capitalize transition flex items-center justify-center gap-1.5 ${
-                dotShape === s
+              key={value}
+              className={`flex-1 text-xs py-1.5 rounded-md transition ${
+                params.sizing_mode === value
                   ? "bg-brand-600 text-white"
                   : "bg-surface-lighter text-gray-400 hover:text-white"
               }`}
-              onClick={() => setDotShape(s)}
+              onClick={() => setParam("sizing_mode", value)}
             >
-              {s === "circle" ? (
-                <svg width="12" height="12" viewBox="0 0 12 12">
-                  <circle cx="6" cy="6" r="5" fill="currentColor" />
-                </svg>
-              ) : (
-                <svg width="12" height="12" viewBox="0 0 12 12">
-                  <polygon points="6,0 12,6 6,12 0,6" fill="currentColor" />
-                </svg>
-              )}
-              {s}
+              {label}
             </button>
           ))}
         </div>
@@ -127,7 +230,7 @@ export default function ControlPanel() {
         label="Dot Radius"
         value={params.dot_radius}
         min={1}
-        max={30}
+        max={15}
         step={0.5}
         unit="px"
         onChange={(v) => setParam("dot_radius", v)}
@@ -137,7 +240,7 @@ export default function ControlPanel() {
         label="Spacing"
         value={params.min_spacing}
         min={3}
-        max={60}
+        max={30}
         step={1}
         unit="px"
         onChange={(v) => setParam("min_spacing", v)}
