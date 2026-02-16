@@ -37,6 +37,7 @@
         "to": "backend",
         "filter": [
           "**/*.py",
+          "requirements-desktop.txt",
           "!__pycache__/**",
           "!*.pyc",
           "!main.py",

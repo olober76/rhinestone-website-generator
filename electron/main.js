@@ -21,9 +21,7 @@ const backendDir = isDev
 // File Logger — writes to halftone-studio.log in userData
 // ═══════════════════════════════════════════════════════════════════════
 
-const logDir = isDev
-  ? path.join(__dirname, "..")
-  : app.getPath("userData");
+const logDir = isDev ? path.join(__dirname, "..") : app.getPath("userData");
 
 const logFile = path.join(logDir, "halftone-studio.log");
 
@@ -35,7 +33,8 @@ function initLog() {
       if (fs.existsSync(old)) fs.unlinkSync(old);
       fs.renameSync(logFile, old);
     }
-    const header = `\n${"=".repeat(60)}\n` +
+    const header =
+      `\n${"=".repeat(60)}\n` +
       `Halftone Studio — ${new Date().toISOString()}\n` +
       `Platform: ${process.platform} ${process.arch}\n` +
       `Electron: ${process.versions.electron}  Node: ${process.versions.node}\n` +
@@ -49,7 +48,9 @@ function initLog() {
 
 function log(level, ...args) {
   const ts = new Date().toISOString();
-  const msg = args.map(a => (typeof a === "string" ? a : JSON.stringify(a))).join(" ");
+  const msg = args
+    .map((a) => (typeof a === "string" ? a : JSON.stringify(a)))
+    .join(" ");
   const line = `[${ts}] [${level}] ${msg}\n`;
   console.log(line.trimEnd());
   try {
@@ -109,7 +110,116 @@ function findPython() {
 // Python CLI Bridge — stdin/stdout JSON protocol
 // ═══════════════════════════════════════════════════════════════════════
 
-function startBridge() {
+// Packages the CLI bridge needs (import-name → pip-name)
+const REQUIRED_PACKAGES = [
+  { importName: "cv2", pipName: "opencv-python-headless" },
+  { importName: "numpy", pipName: "numpy" },
+  { importName: "skimage", pipName: "scikit-image" },
+  { importName: "PIL", pipName: "Pillow" },
+  { importName: "cairosvg", pipName: "cairosvg" },
+  { importName: "shapely", pipName: "shapely" },
+];
+
+/**
+ * Check which Python packages are missing and install them.
+ * Shows a progress dialog while installing.
+ * Returns true if all deps are satisfied, false on failure.
+ */
+async function ensureDependencies(pythonCmd) {
+  // Write a temp check script (avoids quoting issues on Windows)
+  const checkPy = path.join(app.getPath("temp"), "halftone_check_deps.py");
+  const scriptLines = REQUIRED_PACKAGES.map(
+    (p) =>
+      `try:\n    import ${p.importName}\n    print("ok:${p.importName}")\nexcept ImportError:\n    print("miss:${p.importName}")`,
+  ).join("\n");
+  fs.writeFileSync(checkPy, scriptLines, "utf-8");
+
+  let checkOutput;
+  try {
+    checkOutput = execSync(`${pythonCmd} "${checkPy}"`, {
+      encoding: "utf-8",
+      timeout: 30000,
+      windowsHide: true,
+      cwd: backendDir,
+    });
+    log("INFO", "Dependency check output:", checkOutput.trim());
+  } catch (e) {
+    log("ERROR", "Dependency check script failed:", e.message);
+    // Fallback: try installing everything
+    checkOutput = REQUIRED_PACKAGES.map((p) => `miss:${p.importName}`).join("\n");
+  }
+
+  const missing = REQUIRED_PACKAGES.filter((p) =>
+    checkOutput.includes(`miss:${p.importName}`),
+  );
+
+  if (missing.length === 0) {
+    log("INFO", "All Python dependencies satisfied");
+    return true;
+  }
+
+  const pipNames = missing.map((p) => p.pipName);
+  log("INFO", `Missing packages: ${pipNames.join(", ")}  — installing...`);
+
+  // Show a non-blocking progress window
+  let progressWin = new BrowserWindow({
+    width: 450,
+    height: 200,
+    frame: false,
+    resizable: false,
+    alwaysOnTop: true,
+    transparent: false,
+    backgroundColor: "#1a1a2e",
+    webPreferences: { nodeIntegration: false, contextIsolation: true },
+  });
+  progressWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`
+    <html><body style="margin:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+      height:100vh;background:#1a1a2e;color:#e0e0e0;font-family:system-ui;user-select:none">
+      <div style="width:40px;height:40px;border:3px solid #444;border-top:3px solid #7c3aed;
+        border-radius:50%;animation:spin 1s linear infinite;margin-bottom:18px"></div>
+      <div style="font-size:15px;font-weight:600">Installing Python dependencies...</div>
+      <div style="font-size:12px;color:#888;margin-top:8px">${pipNames.join(", ")}</div>
+      <div style="font-size:11px;color:#666;margin-top:12px">This only happens once</div>
+      <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
+    </body></html>
+  `)}`);
+
+  // Run pip install
+  const reqFile = path.join(backendDir, "requirements-desktop.txt");
+  const useReqFile = fs.existsSync(reqFile);
+  const pipArgs = useReqFile
+    ? ["-m", "pip", "install", "--quiet", "-r", reqFile]
+    : ["-m", "pip", "install", "--quiet", ...pipNames];
+
+  log("INFO", `pip command: ${pythonCmd} ${pipArgs.join(" ")}`);
+
+  try {
+    const pipOutput = execSync(`${pythonCmd} ${pipArgs.join(" ")}`, {
+      encoding: "utf-8",
+      timeout: 300000, // 5 min
+      windowsHide: true,
+      cwd: backendDir,
+    });
+    log("INFO", "pip install succeeded:", pipOutput.trim().split("\n").slice(-3).join(" | "));
+  } catch (e) {
+    log("ERROR", "pip install failed:", e.message);
+    if (progressWin && !progressWin.isDestroyed()) progressWin.close();
+    dialog.showErrorBox(
+      "Dependency Installation Failed",
+      `Could not install required Python packages:\n${pipNames.join(", ")}\n\n` +
+        `Error: ${e.stderr || e.message}\n\n` +
+        "Please run manually:\n" +
+        `  pip install ${pipNames.join(" ")}`,
+    );
+    return false;
+  }
+
+  if (progressWin && !progressWin.isDestroyed()) progressWin.close();
+  log("INFO", "All dependencies installed successfully");
+  return true;
+}
+
+async function startBridge() {
   const pythonCmd = findPython();
   if (!pythonCmd) {
     dialog.showErrorBox(
@@ -122,7 +232,17 @@ function startBridge() {
     return;
   }
 
-  log("INFO", `Starting bridge: ${pythonCmd} cli_bridge.py  (cwd: ${backendDir})`);
+  // Ensure Python packages are installed
+  const depsOk = await ensureDependencies(pythonCmd);
+  if (!depsOk) {
+    app.quit();
+    return;
+  }
+
+  log(
+    "INFO",
+    `Starting bridge: ${pythonCmd} cli_bridge.py  (cwd: ${backendDir})`,
+  );
 
   bridgeProcess = spawn(pythonCmd, ["cli_bridge.py"], {
     cwd: backendDir,
@@ -158,16 +278,29 @@ function startBridge() {
           const { resolve, reject, cmdName } = currentRequest;
           currentRequest = null;
           if (msg.ok === false) {
-            log("ERROR", `Bridge cmd [${cmdName}] failed:`, msg.error || "unknown");
+            log(
+              "ERROR",
+              `Bridge cmd [${cmdName}] failed:`,
+              msg.error || "unknown",
+            );
             reject(new Error(msg.error || "Bridge error"));
           } else {
-            log("INFO", `Bridge cmd [${cmdName}] ok — keys: ${Object.keys(msg).join(", ")}`);
+            log(
+              "INFO",
+              `Bridge cmd [${cmdName}] ok — keys: ${Object.keys(msg).join(", ")}`,
+            );
             resolve(msg);
           }
           processQueue();
         }
       } catch (e) {
-        log("ERROR", "Bridge parse error:", e.message, "raw:", line.substring(0, 200));
+        log(
+          "ERROR",
+          "Bridge parse error:",
+          e.message,
+          "raw:",
+          line.substring(0, 200),
+        );
         if (currentRequest) {
           currentRequest.reject(e);
           currentRequest = null;
@@ -217,7 +350,10 @@ function processQueue() {
     return;
   }
   const jsonStr = JSON.stringify(currentRequest.payload);
-  log("INFO", `Sending cmd [${currentRequest.cmdName}] (${jsonStr.length} bytes)`);
+  log(
+    "INFO",
+    `Sending cmd [${currentRequest.cmdName}] (${jsonStr.length} bytes)`,
+  );
   bridgeProcess.stdin.write(jsonStr + "\n");
 }
 
@@ -282,7 +418,10 @@ function createWindow() {
 // ═══════════════════════════════════════════════════════════════════════
 
 ipcMain.handle("python:upload", async (_ev, imageB64, canvasW, canvasH) => {
-  log("INFO", `IPC python:upload — image size: ${imageB64.length} chars, canvas: ${canvasW}x${canvasH}`);
+  log(
+    "INFO",
+    `IPC python:upload — image size: ${imageB64.length} chars, canvas: ${canvasW}x${canvasH}`,
+  );
   return sendToBridge("upload", {
     cmd: "upload",
     image_b64: imageB64,
@@ -367,10 +506,10 @@ ipcMain.handle("shell:openDirectory", async (_ev, dirPath) => {
 // App lifecycle
 // ═══════════════════════════════════════════════════════════════════════
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   initLog();
   log("INFO", "App ready, starting bridge...");
-  startBridge();
+  await startBridge();
   createWindow();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
