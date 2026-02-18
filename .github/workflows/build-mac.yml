@@ -28,13 +28,13 @@ jobs:
 
       # verify python (optional tapi bagus buat debug)
       - name: Check Python version
-        run: python --version
+        run: python3 --version
 
       - name: Install dependencies
         run: npm install
 
       - name: Fix vite permissions
-        run: chmod +x frontend/node_modules/.bin/*
+        run: chmod +x frontend/node_modules/.bin/* || true
 
       - name: Build mac dmg
         run: npm run pack:mac
