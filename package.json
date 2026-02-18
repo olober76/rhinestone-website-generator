@@ -86,6 +86,7 @@
     },
     "dmg": {
       "title": "Halftone Studio",
+      "background": null,
       "contents": [
         {
           "x": 130,
