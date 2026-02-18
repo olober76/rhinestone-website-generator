@@ -33,6 +33,9 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Fix vite permissions
+        run: chmod +x frontend/node_modules/.bin/*
+
       - name: Build mac dmg
         run: npm run pack:mac
 
