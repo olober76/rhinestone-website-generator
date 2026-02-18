@@ -177,7 +177,9 @@ async def export_pattern(req: ExportRequest):
     dots = req.dots if req.dots else session["dots"]
     fmt = req.format.lower()
 
-    svg_string = dots_to_svg_string(dots, req.width, req.height, dot_shape=req.dot_shape)
+    # For PNG export, use transparent background (no bg rect)
+    bg = "none" if fmt == "png" else "#111111"
+    svg_string = dots_to_svg_string(dots, req.width, req.height, bg_color=bg, dot_shape=req.dot_shape)
 
     if fmt == "svg":
         return StreamingResponse(

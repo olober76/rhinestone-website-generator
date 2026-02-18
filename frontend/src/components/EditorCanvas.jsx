@@ -479,7 +479,10 @@ export default function EditorCanvas() {
           if (scrollableTrack <= 0 || scrollableContent <= 0) return;
           const delta = ev.clientX - startMouse;
           const panDelta = (delta / scrollableTrack) * scrollableContent;
-          const newX = Math.min(0, Math.max(vpW - contentTotal, startPanVal - panDelta));
+          const newX = Math.min(
+            0,
+            Math.max(vpW - contentTotal, startPanVal - panDelta),
+          );
           setPan((prev) => ({ ...prev, x: newX }));
         } else {
           const contentTotal = ch * curZoom;
@@ -494,7 +497,10 @@ export default function EditorCanvas() {
           if (scrollableTrack <= 0 || scrollableContent <= 0) return;
           const delta = ev.clientY - startMouse;
           const panDelta = (delta / scrollableTrack) * scrollableContent;
-          const newY = Math.min(0, Math.max(vpH - contentTotal, startPanVal - panDelta));
+          const newY = Math.min(
+            0,
+            Math.max(vpH - contentTotal, startPanVal - panDelta),
+          );
           setPan((prev) => ({ ...prev, y: newY }));
         }
       };
@@ -652,12 +658,7 @@ export default function EditorCanvas() {
           transform={`translate(${layer.x}, ${layer.y}) scale(${scaleX}, ${scaleY}) translate(${-dotOffsetX}, ${-dotOffsetY})`}
         >
           {layer.dots.map((d, i) =>
-            renderDot(
-              d,
-              i,
-              layer,
-              tool === "delete" ? handleDotDelete : null,
-            ),
+            renderDot(d, i, layer, tool === "delete" ? handleDotDelete : null),
           )}
         </g>
       </g>

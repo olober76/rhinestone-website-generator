@@ -137,7 +137,9 @@ def handle_export(msg: dict) -> dict:
 
     logger.info("export: %s, %d dots, %dx%d, shape=%s", fmt, len(dots), width, height, dot_shape)
 
-    svg_string = dots_to_svg_string(dots, width, height, dot_shape=dot_shape)
+    # For PNG export, use transparent background (no bg rect)
+    bg = "none" if fmt == "png" else "#111111"
+    svg_string = dots_to_svg_string(dots, width, height, bg_color=bg, dot_shape=dot_shape)
 
     if fmt == "svg":
         return {

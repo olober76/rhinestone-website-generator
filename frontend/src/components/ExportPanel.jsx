@@ -88,59 +88,68 @@ export default function ExportPanel() {
     await window.electronAPI.openDirectory(saveDir);
   }, [saveDir]);
 
-  /** Build a composite SVG string with all visible layers */
-  const generateSvgString = useCallback(() => {
-    const lines = [
-      `<svg xmlns="http://www.w3.org/2000/svg" width="${canvasWidth}" height="${canvasHeight}" viewBox="0 0 ${canvasWidth} ${canvasHeight}">`,
-      `  <rect width="${canvasWidth}" height="${canvasHeight}" fill="${bgColor}"/>`,
-    ];
-
-    for (const layer of layers) {
-      if (!layer.visible || layer.dots.length === 0) continue;
-
-      const dotOffsetX = layer._dotOffsetX || 0;
-      const dotOffsetY = layer._dotOffsetY || 0;
-      const origW = layer._origWidth || layer.width;
-      const origH = layer._origHeight || layer.height;
-      const scaleX = layer.width / origW;
-      const scaleY = layer.height / origH;
-      lines.push(
-        `  <g transform="translate(${layer.x}, ${layer.y}) scale(${scaleX}, ${scaleY}) translate(${-dotOffsetX}, ${-dotOffsetY})" opacity="${layer.opacity}">`,
-      );
-
-      for (let i = 0; i < layer.dots.length; i++) {
-        const d = layer.dots[i];
-        const color = d.color || layer.dotColor;
-        const r = d.r || layer.params.dot_radius;
-        let shape = d.shape || layer.dotShape;
-        if (shape === "random")
-          shape =
-            randomShapes[Math.abs(Math.round(d.x * 7 + d.y * 13 + i)) % 4];
-
-        if (shape === "diamond") {
-          const pts = `${d.x},${d.y - r} ${d.x + r},${d.y} ${d.x},${d.y + r} ${d.x - r},${d.y}`;
-          lines.push(`    <polygon points="${pts}" fill="${color}"/>`);
-        } else if (shape === "star") {
-          lines.push(
-            `    <polygon points="${starPts(d.x, d.y, r)}" fill="${color}"/>`,
-          );
-        } else if (shape === "hexagon") {
-          lines.push(
-            `    <polygon points="${hexPts(d.x, d.y, r)}" fill="${color}"/>`,
-          );
-        } else {
-          lines.push(
-            `    <circle cx="${d.x}" cy="${d.y}" r="${r}" fill="${color}"/>`,
-          );
-        }
+  /** Build a composite SVG string with all visible layers.
+   *  @param {boolean} transparent - if true, skip background rect (for PNG export)
+   */
+  const generateSvgString = useCallback(
+    (transparent = false) => {
+      const lines = [
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${canvasWidth}" height="${canvasHeight}" viewBox="0 0 ${canvasWidth} ${canvasHeight}">`,
+      ];
+      if (!transparent) {
+        lines.push(
+          `  <rect width="${canvasWidth}" height="${canvasHeight}" fill="${bgColor}"/>`,
+        );
       }
 
-      lines.push("  </g>");
-    }
+      for (const layer of layers) {
+        if (!layer.visible || layer.dots.length === 0) continue;
 
-    lines.push("</svg>");
-    return lines.join("\n");
-  }, [layers, canvasWidth, canvasHeight, bgColor]);
+        const dotOffsetX = layer._dotOffsetX || 0;
+        const dotOffsetY = layer._dotOffsetY || 0;
+        const origW = layer._origWidth || layer.width;
+        const origH = layer._origHeight || layer.height;
+        const scaleX = layer.width / origW;
+        const scaleY = layer.height / origH;
+        lines.push(
+          `  <g transform="translate(${layer.x}, ${layer.y}) scale(${scaleX}, ${scaleY}) translate(${-dotOffsetX}, ${-dotOffsetY})" opacity="${layer.opacity}">`,
+        );
+
+        for (let i = 0; i < layer.dots.length; i++) {
+          const d = layer.dots[i];
+          const color = d.color || layer.dotColor;
+          const r = d.r || layer.params.dot_radius;
+          let shape = d.shape || layer.dotShape;
+          if (shape === "random")
+            shape =
+              randomShapes[Math.abs(Math.round(d.x * 7 + d.y * 13 + i)) % 4];
+
+          if (shape === "diamond") {
+            const pts = `${d.x},${d.y - r} ${d.x + r},${d.y} ${d.x},${d.y + r} ${d.x - r},${d.y}`;
+            lines.push(`    <polygon points="${pts}" fill="${color}"/>`);
+          } else if (shape === "star") {
+            lines.push(
+              `    <polygon points="${starPts(d.x, d.y, r)}" fill="${color}"/>`,
+            );
+          } else if (shape === "hexagon") {
+            lines.push(
+              `    <polygon points="${hexPts(d.x, d.y, r)}" fill="${color}"/>`,
+            );
+          } else {
+            lines.push(
+              `    <circle cx="${d.x}" cy="${d.y}" r="${r}" fill="${color}"/>`,
+            );
+          }
+        }
+
+        lines.push("  </g>");
+      }
+
+      lines.push("</svg>");
+      return lines.join("\n");
+    },
+    [layers, canvasWidth, canvasHeight, bgColor],
+  );
 
   /** Flatten all visible layers' dots into a single array (for raster export via backend) */
   const flattenDots = useCallback(() => {
