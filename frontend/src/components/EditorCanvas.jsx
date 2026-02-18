@@ -1,4 +1,10 @@
-import React, { useRef, useEffect, useCallback, useState, useMemo } from "react";
+import React, {
+  useRef,
+  useEffect,
+  useCallback,
+  useState,
+  useMemo,
+} from "react";
 import useStore from "../store";
 
 /* ── Shape helpers ── */
@@ -49,7 +55,10 @@ function renderDot(d, i, layer, onDelete) {
     stroke: "none",
     strokeWidth: 0,
     opacity: layer.opacity * 0.9,
-    style: { cursor: onDelete ? "pointer" : "default" },
+    style: {
+      cursor: onDelete ? "pointer" : "default",
+      pointerEvents: onDelete ? "all" : undefined,
+    },
     onMouseDown: onDelete
       ? (e) => {
           e.stopPropagation();
@@ -101,6 +110,10 @@ export default function EditorCanvas() {
   const pushHistory = useStore((s) => s.pushHistory);
 
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const panRef = useRef(pan);
+  useEffect(() => {
+    panRef.current = pan;
+  }, [pan]);
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
 
@@ -112,8 +125,24 @@ export default function EditorCanvas() {
   // Snap guide lines (shown during drag)
   const [guides, setGuides] = useState([]); // [{axis:'x'|'y', pos:number}]
 
+  // Viewport ref and size for scrollbars
+  const viewportRef = useRef(null);
+  const [viewportSize, setViewportSize] = useState({ w: 0, h: 0 });
+
   const cw = canvasWidth;
   const ch = canvasHeight;
+
+  // ─── Viewport size tracking for scrollbars ───────────────────
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const { width, height } = entries[0].contentRect;
+      setViewportSize({ w: width, h: height });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   // ─── Compute snap targets from canvas + other layers ─────────
   const getSnapTargets = useCallback(
@@ -347,9 +376,9 @@ export default function EditorCanvas() {
     [clientToSvg, pushHistory, selectLayer],
   );
 
-  // ─── Zoom with scroll ────────────────────────────────────────
+  // ─── Zoom with scroll — zooms toward pointer position ────────
   useEffect(() => {
-    const el = canvasWrapperRef.current?.parentElement;
+    const el = viewportRef.current;
     if (!el) return;
     const handler = (e) => {
       e.preventDefault();
@@ -357,11 +386,82 @@ export default function EditorCanvas() {
       const delta = e.deltaY > 0 ? -0.1 : 0.1;
       const cur = useStore.getState().zoom;
       const next = Math.max(0.1, Math.min(5, cur + delta));
+
+      // Keep the canvas point under the cursor fixed
+      const rect = el.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      const curPan = panRef.current;
+      const newPanX = mx - (mx - curPan.x) * (next / cur);
+      const newPanY = my - (my - curPan.y) * (next / cur);
+
+      setPan({ x: newPanX, y: newPanY });
       useStore.getState().setZoom(next);
     };
     el.addEventListener("wheel", handler, { passive: false });
     return () => el.removeEventListener("wheel", handler);
   }, []);
+
+  // ─── Scrollbar constants & drag handler ──────────────────────
+  const SCROLLBAR_SIZE = 8;
+  const SCROLLBAR_MARGIN = 4;
+  const MIN_THUMB_SIZE = 30;
+
+  const handleScrollThumbDown = useCallback(
+    (e, axis) => {
+      e.stopPropagation();
+      e.preventDefault();
+      const curPan = panRef.current;
+      const startMouse = axis === "x" ? e.clientX : e.clientY;
+      const startPanVal = axis === "x" ? curPan.x : curPan.y;
+
+      const handleMove = (ev) => {
+        const vp = viewportRef.current;
+        if (!vp) return;
+        const vpRect = vp.getBoundingClientRect();
+        const curZoom = useStore.getState().zoom;
+
+        if (axis === "x") {
+          const contentTotal = cw * curZoom;
+          const vpW = vpRect.width;
+          const trackW = vpW - 2 * SCROLLBAR_MARGIN - SCROLLBAR_SIZE;
+          const thumbW = Math.max(
+            MIN_THUMB_SIZE,
+            (vpW / contentTotal) * trackW,
+          );
+          const scrollableTrack = trackW - thumbW;
+          const scrollableContent = contentTotal - vpW;
+          if (scrollableTrack <= 0 || scrollableContent <= 0) return;
+          const delta = ev.clientX - startMouse;
+          const panDelta = (delta / scrollableTrack) * scrollableContent;
+          setPan((prev) => ({ ...prev, x: startPanVal - panDelta }));
+        } else {
+          const contentTotal = ch * curZoom;
+          const vpH = vpRect.height;
+          const trackH = vpH - 2 * SCROLLBAR_MARGIN - SCROLLBAR_SIZE;
+          const thumbH = Math.max(
+            MIN_THUMB_SIZE,
+            (vpH / contentTotal) * trackH,
+          );
+          const scrollableTrack = trackH - thumbH;
+          const scrollableContent = contentTotal - vpH;
+          if (scrollableTrack <= 0 || scrollableContent <= 0) return;
+          const delta = ev.clientY - startMouse;
+          const panDelta = (delta / scrollableTrack) * scrollableContent;
+          setPan((prev) => ({ ...prev, y: startPanVal - panDelta }));
+        }
+      };
+
+      const handleUp = () => {
+        window.removeEventListener("mousemove", handleMove);
+        window.removeEventListener("mouseup", handleUp);
+      };
+
+      window.addEventListener("mousemove", handleMove);
+      window.addEventListener("mouseup", handleUp);
+    },
+    [cw, ch],
+  );
 
   // ─── Render bounding box + handles for selected layer ────────
   const renderBoundingBox = (layer) => {
@@ -507,13 +607,15 @@ export default function EditorCanvas() {
         {/* Layer dots — clipped to bounding box for proper z-order stacking */}
         <g
           clipPath={`url(#${clipId})`}
-          onMouseDown={(e) => {
-            if (tool === "select") {
-              e.stopPropagation();
-              selectLayer(layer.id);
-              startDrag(e, layer, "move");
-            }
-          }}
+          onMouseDown={
+            tool === "select"
+              ? (e) => {
+                  e.stopPropagation();
+                  selectLayer(layer.id);
+                  startDrag(e, layer, "move");
+                }
+              : undefined
+          }
         >
           <g
             transform={`translate(${layer.x}, ${layer.y}) scale(${scaleX}, ${scaleY}) translate(${-dotOffsetX}, ${-dotOffsetY})`}
@@ -539,37 +641,165 @@ export default function EditorCanvas() {
     return "grab";
   };
 
+  // ─── Scrollbar computations ──────────────────────────────────
+  const contentW = cw * zoom;
+  const contentH = ch * zoom;
+  const needHScroll = contentW > viewportSize.w;
+  const needVScroll = contentH > viewportSize.h;
+
+  const hTrackW =
+    viewportSize.w -
+    2 * SCROLLBAR_MARGIN -
+    (needVScroll ? SCROLLBAR_SIZE + SCROLLBAR_MARGIN : 0);
+  const hThumbW =
+    hTrackW > 0
+      ? Math.max(MIN_THUMB_SIZE, (viewportSize.w / contentW) * hTrackW)
+      : 0;
+  const hScrollRange = contentW - viewportSize.w;
+  const hThumbRange = hTrackW - hThumbW;
+  const hThumbX =
+    hScrollRange > 0 && hThumbRange > 0
+      ? Math.max(
+          0,
+          Math.min(hThumbRange, (-pan.x / hScrollRange) * hThumbRange),
+        )
+      : 0;
+
+  const vTrackH =
+    viewportSize.h -
+    2 * SCROLLBAR_MARGIN -
+    (needHScroll ? SCROLLBAR_SIZE + SCROLLBAR_MARGIN : 0);
+  const vThumbH =
+    vTrackH > 0
+      ? Math.max(MIN_THUMB_SIZE, (viewportSize.h / contentH) * vTrackH)
+      : 0;
+  const vScrollRange = contentH - viewportSize.h;
+  const vThumbRange = vTrackH - vThumbH;
+  const vThumbY =
+    vScrollRange > 0 && vThumbRange > 0
+      ? Math.max(
+          0,
+          Math.min(vThumbRange, (-pan.y / vScrollRange) * vThumbRange),
+        )
+      : 0;
+
   return (
     <div
-      ref={canvasWrapperRef}
-      className="canvas-container"
+      ref={viewportRef}
       style={{
-        transform: `translate(${pan.x}px, ${pan.y}px)`,
-        cursor: getCursor(),
+        position: "relative",
+        overflow: "hidden",
+        width: "100%",
+        height: "100%",
       }}
     >
-      <svg
-        ref={svgRef}
-        width={cw * zoom}
-        height={ch * zoom}
-        viewBox={`0 0 ${cw} ${ch}`}
-        onMouseDown={handleSvgMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
+      <div
+        ref={canvasWrapperRef}
+        className="canvas-container"
+        style={{
+          transform: `translate(${pan.x}px, ${pan.y}px)`,
+          cursor: getCursor(),
+        }}
       >
-        {/* Background */}
-        <rect width={cw} height={ch} fill={bgColor} />
+        <svg
+          ref={svgRef}
+          width={cw * zoom}
+          height={ch * zoom}
+          viewBox={`0 0 ${cw} ${ch}`}
+          onMouseDown={handleSvgMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseUp}
+        >
+          {/* Background */}
+          <rect width={cw} height={ch} fill={bgColor} />
 
-        {/* Layers — rendered bottom to top, each clipped for proper overlap */}
-        {layers.map((layer, index) => renderLayer(layer, index))}
+          {/* Layers — rendered bottom to top, each clipped for proper overlap */}
+          {layers.map((layer, index) => renderLayer(layer, index))}
 
-        {/* Snap guide lines — rendered above layers */}
-        {renderGuides()}
+          {/* Snap guide lines — rendered above layers */}
+          {renderGuides()}
 
-        {/* Bounding boxes — rendered on top of everything */}
-        {layers.map((layer) => renderBoundingBox(layer))}
-      </svg>
+          {/* Bounding boxes — rendered on top of everything */}
+          {layers.map((layer) => renderBoundingBox(layer))}
+        </svg>
+      </div>
+
+      {/* Horizontal scrollbar */}
+      {needHScroll && (
+        <div
+          style={{
+            position: "absolute",
+            bottom: SCROLLBAR_MARGIN,
+            left: SCROLLBAR_MARGIN,
+            width: hTrackW,
+            height: SCROLLBAR_SIZE,
+            borderRadius: SCROLLBAR_SIZE / 2,
+            backgroundColor: "rgba(0,0,0,0.15)",
+            zIndex: 10,
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <div
+            style={{
+              position: "absolute",
+              left: hThumbX,
+              top: 0,
+              width: hThumbW,
+              height: SCROLLBAR_SIZE,
+              borderRadius: SCROLLBAR_SIZE / 2,
+              backgroundColor: "rgba(255,255,255,0.5)",
+              cursor: "pointer",
+              transition: "background-color 0.15s",
+            }}
+            onMouseDown={(e) => handleScrollThumbDown(e, "x")}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.7)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.5)";
+            }}
+          />
+        </div>
+      )}
+
+      {/* Vertical scrollbar */}
+      {needVScroll && (
+        <div
+          style={{
+            position: "absolute",
+            right: SCROLLBAR_MARGIN,
+            top: SCROLLBAR_MARGIN,
+            width: SCROLLBAR_SIZE,
+            height: vTrackH,
+            borderRadius: SCROLLBAR_SIZE / 2,
+            backgroundColor: "rgba(0,0,0,0.15)",
+            zIndex: 10,
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <div
+            style={{
+              position: "absolute",
+              top: vThumbY,
+              left: 0,
+              width: SCROLLBAR_SIZE,
+              height: vThumbH,
+              borderRadius: SCROLLBAR_SIZE / 2,
+              backgroundColor: "rgba(255,255,255,0.5)",
+              cursor: "pointer",
+              transition: "background-color 0.15s",
+            }}
+            onMouseDown={(e) => handleScrollThumbDown(e, "y")}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.7)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.5)";
+            }}
+          />
+        </div>
+      )}
     </div>
   );
 }
