@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useCallback, useState } from "react";
+import React, { useRef, useEffect, useCallback, useState, useMemo } from "react";
 import useStore from "../store";
 
 /* ── Shape helpers ── */
@@ -73,10 +73,17 @@ function renderDot(d, i, layer, onDelete) {
 /* ── Bounding-box resize handle size (in canvas coordinates) ── */
 const HANDLE_SIZE = 8;
 
+/* ── Snap guide configuration ── */
+const SNAP_THRESHOLD = 6; // px in canvas coords — distance to snap
+const GUIDE_COLOR = "#ff3b9a"; // magenta/pink like Canva/Photoshop
+
 /**
  * Multi-layer SVG editor canvas.
- * Supports pan/zoom, per-layer bounding-box move/resize,
- * click-to-delete dots, and layer ordering.
+ * Features:
+ * - Proper z-order with clipPath per layer (Photoshop-like stacking)
+ * - Pan/zoom, per-layer bounding-box move/resize
+ * - Snap guides for auto-center and alignment (Canva/Photoshop-like)
+ * - Click-to-delete dots
  */
 export default function EditorCanvas() {
   const svgRef = useRef(null);
@@ -102,8 +109,90 @@ export default function EditorCanvas() {
   const [dragStart, setDragStart] = useState(null);
   const [dragLayerStart, setDragLayerStart] = useState(null);
 
+  // Snap guide lines (shown during drag)
+  const [guides, setGuides] = useState([]); // [{axis:'x'|'y', pos:number}]
+
   const cw = canvasWidth;
   const ch = canvasHeight;
+
+  // ─── Compute snap targets from canvas + other layers ─────────
+  const getSnapTargets = useCallback(
+    (excludeLayerId) => {
+      const targets = {
+        x: [], // vertical snap lines (x positions)
+        y: [], // horizontal snap lines (y positions)
+      };
+
+      // Canvas edges & center
+      targets.x.push(0, cw / 2, cw);
+      targets.y.push(0, ch / 2, ch);
+
+      // Other layers' edges & centers
+      for (const l of layers) {
+        if (l.id === excludeLayerId || !l.visible) continue;
+        targets.x.push(l.x, l.x + l.width / 2, l.x + l.width);
+        targets.y.push(l.y, l.y + l.height / 2, l.y + l.height);
+      }
+
+      return targets;
+    },
+    [layers, cw, ch],
+  );
+
+  // ─── Apply snapping to a position ────────────────────────────
+  const applySnap = useCallback(
+    (layerX, layerY, layerW, layerH, excludeLayerId) => {
+      const targets = getSnapTargets(excludeLayerId);
+      const activeGuides = [];
+      let snappedX = layerX;
+      let snappedY = layerY;
+
+      // Points on the layer that can snap: left, center, right
+      const layerXPoints = [layerX, layerX + layerW / 2, layerX + layerW];
+      const layerYPoints = [layerY, layerY + layerH / 2, layerY + layerH];
+
+      // Snap X (vertical guides)
+      let bestDx = Infinity;
+      let bestSnapX = null;
+      let bestGuideX = null;
+      for (const lxp of layerXPoints) {
+        for (const tx of targets.x) {
+          const dist = Math.abs(lxp - tx);
+          if (dist < SNAP_THRESHOLD && dist < bestDx) {
+            bestDx = dist;
+            bestSnapX = layerX + (tx - lxp); // shift layer so point aligns
+            bestGuideX = tx;
+          }
+        }
+      }
+      if (bestSnapX !== null) {
+        snappedX = bestSnapX;
+        activeGuides.push({ axis: "x", pos: bestGuideX });
+      }
+
+      // Snap Y (horizontal guides)
+      let bestDy = Infinity;
+      let bestSnapY = null;
+      let bestGuideY = null;
+      for (const lyp of layerYPoints) {
+        for (const ty of targets.y) {
+          const dist = Math.abs(lyp - ty);
+          if (dist < SNAP_THRESHOLD && dist < bestDy) {
+            bestDy = dist;
+            bestSnapY = layerY + (ty - lyp);
+            bestGuideY = ty;
+          }
+        }
+      }
+      if (bestSnapY !== null) {
+        snappedY = bestSnapY;
+        activeGuides.push({ axis: "y", pos: bestGuideY });
+      }
+
+      return { x: snappedX, y: snappedY, guides: activeGuides };
+    },
+    [getSnapTargets],
+  );
 
   // ─── Convert client coords to SVG coords ─────────────────────
   const clientToSvg = useCallback(
@@ -167,7 +256,12 @@ export default function EditorCanvas() {
         const ls = dragLayerStart;
 
         if (dragMode === "move") {
-          updateLayer(ls.id, { x: ls.x + dx, y: ls.y + dy });
+          // Apply snapping
+          const rawX = ls.x + dx;
+          const rawY = ls.y + dy;
+          const snapped = applySnap(rawX, rawY, ls.width, ls.height, ls.id);
+          updateLayer(ls.id, { x: snapped.x, y: snapped.y });
+          setGuides(snapped.guides);
         } else if (dragMode === "resize-se") {
           const newW = Math.max(50, ls.width + dx);
           const newH = Math.max(50, ls.height + dy);
@@ -220,6 +314,7 @@ export default function EditorCanvas() {
       dragLayerStart,
       clientToSvg,
       updateLayer,
+      applySnap,
     ],
   );
 
@@ -228,6 +323,7 @@ export default function EditorCanvas() {
       setDragMode(null);
       setDragStart(null);
       setDragLayerStart(null);
+      setGuides([]); // clear guides on drop
     }
     setIsPanning(false);
   }, [dragMode]);
@@ -344,8 +440,42 @@ export default function EditorCanvas() {
     );
   };
 
-  // ─── Render a single layer's dots with transform ─────────────
-  const renderLayer = (layer) => {
+  // ─── Render snap guide lines ─────────────────────────────────
+  const renderGuides = () => {
+    if (guides.length === 0) return null;
+    return (
+      <g key="snap-guides" pointerEvents="none">
+        {guides.map((g, i) =>
+          g.axis === "x" ? (
+            <line
+              key={`guide-${i}`}
+              x1={g.pos}
+              y1={0}
+              x2={g.pos}
+              y2={ch}
+              stroke={GUIDE_COLOR}
+              strokeWidth={1 / zoom}
+              strokeDasharray={`${4 / zoom} ${3 / zoom}`}
+            />
+          ) : (
+            <line
+              key={`guide-${i}`}
+              x1={0}
+              y1={g.pos}
+              x2={cw}
+              y2={g.pos}
+              stroke={GUIDE_COLOR}
+              strokeWidth={1 / zoom}
+              strokeDasharray={`${4 / zoom} ${3 / zoom}`}
+            />
+          ),
+        )}
+      </g>
+    );
+  };
+
+  // ─── Render a single layer's dots with clipPath for z-order ──
+  const renderLayer = (layer, index) => {
     if (!layer.visible || layer.dots.length === 0) return null;
 
     // Dots are generated at canvas-space coordinates.
@@ -358,22 +488,46 @@ export default function EditorCanvas() {
     const scaleX = layer.width / origW;
     const scaleY = layer.height / origH;
 
+    const clipId = `clip-layer-${layer.id}`;
+
     return (
-      <g
-        key={`dots-${layer.id}`}
-        transform={`translate(${layer.x}, ${layer.y}) scale(${scaleX}, ${scaleY}) translate(${-dotOffsetX}, ${-dotOffsetY})`}
-        onMouseDown={(e) => {
-          if (tool === "select") {
-            e.stopPropagation();
-            selectLayer(layer.id);
-            // Also start move
-            startDrag(e, layer, "move");
-          }
-        }}
-      >
-        {layer.dots.map((d, i) =>
-          renderDot(d, i, layer, tool === "delete" ? handleDotDelete : null),
-        )}
+      <g key={`layer-group-${layer.id}`}>
+        {/* ClipPath to bound this layer within its bounding box */}
+        <defs>
+          <clipPath id={clipId}>
+            <rect
+              x={layer.x}
+              y={layer.y}
+              width={layer.width}
+              height={layer.height}
+            />
+          </clipPath>
+        </defs>
+
+        {/* Layer dots — clipped to bounding box for proper z-order stacking */}
+        <g
+          clipPath={`url(#${clipId})`}
+          onMouseDown={(e) => {
+            if (tool === "select") {
+              e.stopPropagation();
+              selectLayer(layer.id);
+              startDrag(e, layer, "move");
+            }
+          }}
+        >
+          <g
+            transform={`translate(${layer.x}, ${layer.y}) scale(${scaleX}, ${scaleY}) translate(${-dotOffsetX}, ${-dotOffsetY})`}
+          >
+            {layer.dots.map((d, i) =>
+              renderDot(
+                d,
+                i,
+                layer,
+                tool === "delete" ? handleDotDelete : null,
+              ),
+            )}
+          </g>
+        </g>
       </g>
     );
   };
@@ -407,8 +561,11 @@ export default function EditorCanvas() {
         {/* Background */}
         <rect width={cw} height={ch} fill={bgColor} />
 
-        {/* Layers — rendered bottom to top */}
-        {layers.map((layer) => renderLayer(layer))}
+        {/* Layers — rendered bottom to top, each clipped for proper overlap */}
+        {layers.map((layer, index) => renderLayer(layer, index))}
+
+        {/* Snap guide lines — rendered above layers */}
+        {renderGuides()}
 
         {/* Bounding boxes — rendered on top of everything */}
         {layers.map((layer) => renderBoundingBox(layer))}
