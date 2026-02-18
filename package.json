@@ -86,7 +86,8 @@
     },
     "dmg": {
       "title": "Halftone Studio",
-      "background": null,
+      "writeUpdateInfo": false,
+      "sign": false,
       "contents": [
         {
           "x": 130,
@@ -98,7 +99,11 @@
           "type": "link",
           "path": "/Applications"
         }
-      ]
+      ],
+      "window": {
+        "width": 540,
+        "height": 380
+      }
     },
     "linux": {
       "target": [
