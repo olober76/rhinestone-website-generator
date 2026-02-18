@@ -26,7 +26,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
-    title="Halfstone Studio",
+    title="Halftone Studio",
     version="1.0.0",
     description="Convert any image/logo into halftone dot patterns with variable sizing",
 )
@@ -177,7 +177,9 @@ async def export_pattern(req: ExportRequest):
     dots = req.dots if req.dots else session["dots"]
     fmt = req.format.lower()
 
-    svg_string = dots_to_svg_string(dots, req.width, req.height, dot_shape=req.dot_shape)
+    # For PNG export, use transparent background (no bg rect)
+    bg = "none" if fmt == "png" else "#111111"
+    svg_string = dots_to_svg_string(dots, req.width, req.height, bg_color=bg, dot_shape=req.dot_shape)
 
     if fmt == "svg":
         return StreamingResponse(

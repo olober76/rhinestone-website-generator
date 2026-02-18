@@ -1,0 +1,6 @@
+numpy>=1.26
+opencv-python-headless>=4.9
+scikit-image>=0.22
+Pillow>=10.2
+cairosvg>=2.7
+shapely>=2.0
