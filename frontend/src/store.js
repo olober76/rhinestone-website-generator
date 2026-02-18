@@ -59,8 +59,8 @@ const useStore = create((set, get) => ({
   canvasWidth: 800,
   canvasHeight: 800,
 
-  createCanvas: (w, h) =>
-    set({ canvasCreated: true, canvasWidth: w, canvasHeight: h }),
+  createCanvas: (size) =>
+    set({ canvasCreated: true, canvasWidth: size, canvasHeight: size }),
 
   resetCanvas: () => {
     _layerCounter = 0;

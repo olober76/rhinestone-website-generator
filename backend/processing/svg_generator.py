@@ -33,8 +33,10 @@ def dots_to_svg_string(dots: List[Dict], width: int, height: int, bg_color: str 
         f'<svg xmlns="http://www.w3.org/2000/svg" '
         f'width="{width}" height="{height}" '
         f'viewBox="0 0 {width} {height}">',
-        f'  <rect width="{width}" height="{height}" fill="{bg_color}"/>',
     ]
+    # Only add background rect if bg_color is not transparent/none
+    if bg_color and bg_color.lower() not in ("none", "transparent"):
+        lines.append(f'  <rect width="{width}" height="{height}" fill="{bg_color}"/>')
     for d in dots:
         cx = d.get("x", 0)
         cy = d.get("y", 0)
