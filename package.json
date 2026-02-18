@@ -77,8 +77,12 @@
           ]
         }
       ],
-      "icon": "build/icon.icns",
-      "category": "public.app-category.graphics-design"
+      "icon": "build/icon.png",
+      "category": "public.app-category.graphics-design",
+      "identity": null,
+      "forceCodeSigning": false,
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
     },
     "dmg": {
       "title": "Halftone Studio",

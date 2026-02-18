@@ -38,6 +38,8 @@ jobs:
 
       - name: Build mac dmg
         run: npm run frontend:build && npx electron-builder --mac --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
       - name: Upload dmg artifact
         uses: actions/upload-artifact@v4
