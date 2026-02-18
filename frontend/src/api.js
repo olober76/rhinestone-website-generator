@@ -4,13 +4,22 @@
 
 const BASE = "/api";
 
+/** Get auth headers with Bearer token. */
+function authHeaders(extra = {}) {
+  const token = localStorage.getItem("token");
+  return {
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...extra,
+  };
+}
+
 export async function uploadImage(file, canvasWidth = 800, canvasHeight = 800) {
   const form = new FormData();
   form.append("file", file);
 
   const res = await fetch(
     `${BASE}/upload?canvas_width=${canvasWidth}&canvas_height=${canvasHeight}`,
-    { method: "POST", body: form },
+    { method: "POST", body: form, headers: authHeaders() },
   );
   if (!res.ok) throw new Error(await res.text());
   return res.json();
@@ -19,7 +28,7 @@ export async function uploadImage(file, canvasWidth = 800, canvasHeight = 800) {
 export async function regenerateDots(sessionId, params) {
   const res = await fetch(`${BASE}/regenerate`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ session_id: sessionId, params }),
   });
   if (!res.ok) throw new Error(await res.text());
@@ -29,7 +38,7 @@ export async function regenerateDots(sessionId, params) {
 export async function updateDots(sessionId, dots) {
   const res = await fetch(`${BASE}/dots/update`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ session_id: sessionId, dots }),
   });
   if (!res.ok) throw new Error(await res.text());
@@ -46,7 +55,7 @@ export async function exportPattern(
 ) {
   const res = await fetch(`${BASE}/export`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({
       session_id: sessionId,
       format,

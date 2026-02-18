@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import useStore from "./store";
 import Header from "./components/Header";
 import CanvasSetup from "./components/CanvasSetup";
@@ -7,6 +7,7 @@ import ControlPanel from "./components/ControlPanel";
 import ExportPanel from "./components/ExportPanel";
 import LayerPanel from "./components/LayerPanel";
 import Toolbar from "./components/Toolbar";
+import LoginPage from "./components/LoginPage";
 import { PanelRightClose, PanelRightOpen } from "lucide-react";
 
 export default function App() {
@@ -16,9 +17,62 @@ export default function App() {
   const rightSidebarOpen = useStore((s) => s.rightSidebarOpen);
   const toggleRightSidebar = useStore((s) => s.toggleRightSidebar);
 
+  const [authed, setAuthed] = useState(false);
+  const [authChecking, setAuthChecking] = useState(true);
+
+  // Check for existing token on mount
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    if (!token) {
+      setAuthChecking(false);
+      return;
+    }
+    // Validate token with backend
+    fetch("/api/me", {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((res) => {
+        if (res.ok) setAuthed(true);
+        else {
+          localStorage.removeItem("token");
+          localStorage.removeItem("username");
+        }
+      })
+      .catch(() => {
+        localStorage.removeItem("token");
+        localStorage.removeItem("username");
+      })
+      .finally(() => setAuthChecking(false));
+  }, []);
+
+  const handleLogin = (token, username) => {
+    setAuthed(true);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem("token");
+    localStorage.removeItem("username");
+    setAuthed(false);
+    window.location.reload();
+  };
+
+  // Show spinner while checking auth
+  if (authChecking) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-surface">
+        <div className="w-8 h-8 border-3 border-brand-500/30 border-t-brand-500 rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  // Show login page if not authenticated
+  if (!authed) {
+    return <LoginPage onLogin={handleLogin} />;
+  }
+
   return (
     <div className="min-h-screen flex flex-col">
-      <Header />
+      <Header onLogout={handleLogout} />
 
       {error && (
         <div className="bg-red-900/50 border border-red-500 text-red-200 px-4 py-2 text-sm text-center">

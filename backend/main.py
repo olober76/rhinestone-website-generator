@@ -5,12 +5,14 @@ Converts images into editable dot patterns suitable for clothing production.
 
 import io
 import uuid
+import hashlib
+import secrets
 import logging
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -41,6 +43,49 @@ app.add_middleware(
 
 # In-memory store for processed sessions (swap for Redis/DB later)
 sessions: dict = {}
+
+# ---------------------------------------------------------------------------
+# Authentication — hardcoded user (no database)
+# ---------------------------------------------------------------------------
+USERS = {
+    "admin": hashlib.sha256("halftone2026".encode()).hexdigest(),
+}
+
+# Active tokens (in-memory)
+active_tokens: dict = {}  # token -> username
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+def verify_token(request: Request):
+    """Dependency: verify Bearer token from Authorization header."""
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    token = auth.split(" ", 1)[1]
+    if token not in active_tokens:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    return active_tokens[token]
+
+
+@app.post("/api/login")
+async def login(req: LoginRequest):
+    """Authenticate user and return a session token."""
+    pw_hash = hashlib.sha256(req.password.encode()).hexdigest()
+    if req.username not in USERS or USERS[req.username] != pw_hash:
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+    token = secrets.token_hex(32)
+    active_tokens[token] = req.username
+    return {"token": token, "username": req.username}
+
+
+@app.get("/api/me")
+async def get_me(username: str = Depends(verify_token)):
+    """Check if the current token is valid."""
+    return {"username": username}
 
 # ---------------------------------------------------------------------------
 # Request / Response models
@@ -95,6 +140,7 @@ async def upload_image(
     file: UploadFile = File(...),
     canvas_width: int = 800,
     canvas_height: int = 800,
+    _user: str = Depends(verify_token),
 ):
     """Upload an image and get initial dot pattern."""
     if not file.content_type or not file.content_type.startswith("image/"):
@@ -132,7 +178,7 @@ async def upload_image(
 
 
 @app.post("/api/regenerate")
-async def regenerate_dots(req: RegenerateRequest):
+async def regenerate_dots(req: RegenerateRequest, _user: str = Depends(verify_token)):
     """Regenerate dot pattern with new parameters."""
     session = sessions.get(req.session_id)
     if not session:
@@ -157,7 +203,7 @@ async def regenerate_dots(req: RegenerateRequest):
 
 
 @app.post("/api/dots/update")
-async def update_dots(req: DotEditRequest):
+async def update_dots(req: DotEditRequest, _user: str = Depends(verify_token)):
     """Save edited dot positions from the frontend editor."""
     session = sessions.get(req.session_id)
     if not session:
@@ -168,7 +214,7 @@ async def update_dots(req: DotEditRequest):
 
 
 @app.post("/api/export")
-async def export_pattern(req: ExportRequest):
+async def export_pattern(req: ExportRequest, _user: str = Depends(verify_token)):
     """Export the dot pattern as SVG / PNG / JPG."""
     session = sessions.get(req.session_id)
     if not session:
@@ -203,3 +249,24 @@ async def export_pattern(req: ExportRequest):
         )
     else:
         raise HTTPException(status_code=400, detail="Unsupported format. Use svg, png, or jpg.")
+
+
+# ---------------------------------------------------------------------------
+# Serve React SPA (production — when frontend/dist is at ./static)
+# ---------------------------------------------------------------------------
+STATIC_DIR = Path(__file__).parent / "static"
+
+if STATIC_DIR.is_dir():
+    from fastapi.staticfiles import StaticFiles
+    from fastapi.responses import FileResponse
+
+    # Serve static assets (JS, CSS, images)
+    app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        """Serve React SPA — return index.html for all non-API routes."""
+        file_path = STATIC_DIR / full_path
+        if full_path and file_path.is_file():
+            return FileResponse(file_path)
+        return FileResponse(STATIC_DIR / "index.html")
