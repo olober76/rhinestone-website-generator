@@ -37,9 +37,7 @@ jobs:
         run: chmod +x frontend/node_modules/.bin/* || true
 
       - name: Build mac dmg
-        run: npm run pack:mac
-        env:
-          GH_TOKEN: ""
+        run: npm run frontend:build && npx electron-builder --mac --publish never
 
       - name: Upload dmg artifact
         uses: actions/upload-artifact@v4
