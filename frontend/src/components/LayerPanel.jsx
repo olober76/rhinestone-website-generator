@@ -8,6 +8,7 @@ import {
   ChevronsUp,
   ChevronsDown,
   Plus,
+  Pencil,
   Image as ImageIcon,
 } from "lucide-react";
 import useStore, { createLayer } from "../store";
@@ -89,16 +90,23 @@ export default function LayerPanel() {
         const dotW = maxX - minX;
         const dotH = maxY - minY;
 
+        // Scale element to ~50% of canvas, centered
+        const scale = 0.5;
+        const newW = dotW * scale;
+        const newH = dotH * scale;
+        const newX = (canvasWidth - newW) / 2;
+        const newY = (canvasHeight - newH) / 2;
+
         const layer = createLayer({
           sessionId: data.session_id,
           dots: dots,
           imageWidth: data.image_width,
           imageHeight: data.image_height,
-          // Bounding box matches actual dot extents
-          width: dotW,
-          height: dotH,
-          x: minX,
-          y: minY,
+          // Bounding box at half canvas size, centered
+          width: newW,
+          height: newH,
+          x: newX,
+          y: newY,
           // Store offsets so the transform stays correct
           _dotOffsetX: minX,
           _dotOffsetY: minY,
@@ -249,6 +257,16 @@ export default function LayerPanel() {
                       : "opacity-0 group-hover:opacity-100"
                   } transition-opacity`}
                 >
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      startRename(layer.id, layer.name);
+                    }}
+                    className="p-0.5 text-gray-500 hover:text-white transition"
+                    title="Rename"
+                  >
+                    <Pencil className="w-3 h-3" />
+                  </button>
                   <button
                     onClick={(e) => {
                       e.stopPropagation();

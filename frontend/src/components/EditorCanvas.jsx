@@ -144,6 +144,23 @@ export default function EditorCanvas() {
     return () => ro.disconnect();
   }, []);
 
+  // ─── Clamp / center pan when zoom or viewport changes ────────
+  useEffect(() => {
+    if (viewportSize.w <= 0 || viewportSize.h <= 0) return;
+    const contentW = cw * zoom;
+    const contentH = ch * zoom;
+    setPan((prev) => {
+      let x = prev.x,
+        y = prev.y;
+      if (contentW <= viewportSize.w) x = (viewportSize.w - contentW) / 2;
+      else x = Math.min(0, Math.max(viewportSize.w - contentW, x));
+      if (contentH <= viewportSize.h) y = (viewportSize.h - contentH) / 2;
+      else y = Math.min(0, Math.max(viewportSize.h - contentH, y));
+      if (x === prev.x && y === prev.y) return prev;
+      return { x, y };
+    });
+  }, [cw, ch, zoom, viewportSize]);
+
   // ─── Compute snap targets from canvas + other layers ─────────
   const getSnapTargets = useCallback(
     (excludeLayerId) => {
@@ -270,10 +287,21 @@ export default function EditorCanvas() {
   const handleMouseMove = useCallback(
     (e) => {
       if (isPanning) {
-        setPan({
-          x: e.clientX - panStart.x,
-          y: e.clientY - panStart.y,
-        });
+        let rawX = e.clientX - panStart.x;
+        let rawY = e.clientY - panStart.y;
+        // Clamp pan to keep canvas in view
+        const contentW = cw * zoom;
+        const contentH = ch * zoom;
+        const vp = viewportRef.current;
+        if (vp) {
+          const vpW = vp.clientWidth;
+          const vpH = vp.clientHeight;
+          if (contentW <= vpW) rawX = (vpW - contentW) / 2;
+          else rawX = Math.min(0, Math.max(vpW - contentW, rawX));
+          if (contentH <= vpH) rawY = (vpH - contentH) / 2;
+          else rawY = Math.min(0, Math.max(vpH - contentH, rawY));
+        }
+        setPan({ x: rawX, y: rawY });
         return;
       }
 
@@ -344,6 +372,9 @@ export default function EditorCanvas() {
       clientToSvg,
       updateLayer,
       applySnap,
+      cw,
+      ch,
+      zoom,
     ],
   );
 
@@ -384,19 +415,33 @@ export default function EditorCanvas() {
       e.preventDefault();
       e.stopPropagation();
       const delta = e.deltaY > 0 ? -0.1 : 0.1;
-      const cur = useStore.getState().zoom;
+      const state = useStore.getState();
+      const cur = state.zoom;
       const next = Math.max(0.1, Math.min(5, cur + delta));
 
-      // Keep the canvas point under the cursor fixed
       const rect = el.getBoundingClientRect();
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
       const curPan = panRef.current;
-      const newPanX = mx - (mx - curPan.x) * (next / cur);
-      const newPanY = my - (my - curPan.y) * (next / cur);
+
+      // Zoom-to-pointer: keep the canvas point under cursor fixed
+      let newPanX = mx - (mx - curPan.x) * (next / cur);
+      let newPanY = my - (my - curPan.y) * (next / cur);
+
+      // Clamp / center pan for the new zoom level
+      const curCw = state.canvasWidth;
+      const curCh = state.canvasHeight;
+      const contentW = curCw * next;
+      const contentH = curCh * next;
+      const vpW = rect.width;
+      const vpH = rect.height;
+      if (contentW <= vpW) newPanX = (vpW - contentW) / 2;
+      else newPanX = Math.min(0, Math.max(vpW - contentW, newPanX));
+      if (contentH <= vpH) newPanY = (vpH - contentH) / 2;
+      else newPanY = Math.min(0, Math.max(vpH - contentH, newPanY));
 
       setPan({ x: newPanX, y: newPanY });
-      useStore.getState().setZoom(next);
+      state.setZoom(next);
     };
     el.addEventListener("wheel", handler, { passive: false });
     return () => el.removeEventListener("wheel", handler);
@@ -434,7 +479,8 @@ export default function EditorCanvas() {
           if (scrollableTrack <= 0 || scrollableContent <= 0) return;
           const delta = ev.clientX - startMouse;
           const panDelta = (delta / scrollableTrack) * scrollableContent;
-          setPan((prev) => ({ ...prev, x: startPanVal - panDelta }));
+          const newX = Math.min(0, Math.max(vpW - contentTotal, startPanVal - panDelta));
+          setPan((prev) => ({ ...prev, x: newX }));
         } else {
           const contentTotal = ch * curZoom;
           const vpH = vpRect.height;
@@ -448,7 +494,8 @@ export default function EditorCanvas() {
           if (scrollableTrack <= 0 || scrollableContent <= 0) return;
           const delta = ev.clientY - startMouse;
           const panDelta = (delta / scrollableTrack) * scrollableContent;
-          setPan((prev) => ({ ...prev, y: startPanVal - panDelta }));
+          const newY = Math.min(0, Math.max(vpH - contentTotal, startPanVal - panDelta));
+          setPan((prev) => ({ ...prev, y: newY }));
         }
       };
 
@@ -574,7 +621,7 @@ export default function EditorCanvas() {
     );
   };
 
-  // ─── Render a single layer's dots with clipPath for z-order ──
+  // ─── Render a single layer's dots ─────────────────────────────
   const renderLayer = (layer, index) => {
     if (!layer.visible || layer.dots.length === 0) return null;
 
@@ -588,47 +635,30 @@ export default function EditorCanvas() {
     const scaleX = layer.width / origW;
     const scaleY = layer.height / origH;
 
-    const clipId = `clip-layer-${layer.id}`;
-
     return (
-      <g key={`layer-group-${layer.id}`}>
-        {/* ClipPath to bound this layer within its bounding box */}
-        <defs>
-          <clipPath id={clipId}>
-            <rect
-              x={layer.x}
-              y={layer.y}
-              width={layer.width}
-              height={layer.height}
-            />
-          </clipPath>
-        </defs>
-
-        {/* Layer dots — clipped to bounding box for proper z-order stacking */}
+      <g
+        key={`layer-group-${layer.id}`}
+        onMouseDown={
+          tool === "select"
+            ? (e) => {
+                e.stopPropagation();
+                selectLayer(layer.id);
+                startDrag(e, layer, "move");
+              }
+            : undefined
+        }
+      >
         <g
-          clipPath={`url(#${clipId})`}
-          onMouseDown={
-            tool === "select"
-              ? (e) => {
-                  e.stopPropagation();
-                  selectLayer(layer.id);
-                  startDrag(e, layer, "move");
-                }
-              : undefined
-          }
+          transform={`translate(${layer.x}, ${layer.y}) scale(${scaleX}, ${scaleY}) translate(${-dotOffsetX}, ${-dotOffsetY})`}
         >
-          <g
-            transform={`translate(${layer.x}, ${layer.y}) scale(${scaleX}, ${scaleY}) translate(${-dotOffsetX}, ${-dotOffsetY})`}
-          >
-            {layer.dots.map((d, i) =>
-              renderDot(
-                d,
-                i,
-                layer,
-                tool === "delete" ? handleDotDelete : null,
-              ),
-            )}
-          </g>
+          {layer.dots.map((d, i) =>
+            renderDot(
+              d,
+              i,
+              layer,
+              tool === "delete" ? handleDotDelete : null,
+            ),
+          )}
         </g>
       </g>
     );
