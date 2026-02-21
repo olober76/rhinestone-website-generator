@@ -83,88 +83,188 @@ function saveSettings(s) {
   fs.writeFileSync(settingsPath, JSON.stringify(s, null, 2));
 }
 
-// ── Find Python 3 ──
-function findPython() {
-  // Build a list of candidate commands to try, most-specific first
-  const candidates = [];
-
-  if (process.platform === "win32") {
-    candidates.push("python", "python3", "py");
-  } else if (process.platform === "darwin") {
-    // Prefer Homebrew / pyenv / conda installs over the macOS stub
-    candidates.push(
-      "/opt/homebrew/bin/python3",   // Apple Silicon Homebrew
-      "/usr/local/bin/python3",       // Intel Homebrew
-      "python3",
-      "python",
-    );
-  } else {
-    // Linux: prefer user-installed over system stub
-    candidates.push(
-      "/usr/bin/python3",
-      "python3",
-      "python",
-    );
+/**
+ * Try to resolve a command to its absolute path via `which` / `where`.
+ * Returns the full path string, or null if not found.
+ */
+function resolveCommandPath(cmd) {
+  try {
+    const whichCmd = process.platform === "win32" ? `where "${cmd}"` : `which "${cmd}"`;
+    const out = execSync(whichCmd, {
+      encoding: "utf-8",
+      timeout: 5000,
+      windowsHide: true,
+      shell: true,
+    }).trim();
+    // `where` on Windows can return multiple lines — take the first
+    const firstLine = out.split(/\r?\n/)[0].trim();
+    return firstLine || null;
+  } catch {
+    return null;
   }
+}
 
-  for (const cmd of candidates) {
-    try {
-      const ver = execSync(`"${cmd}" --version`, {
-        encoding: "utf-8",
-        timeout: 5000,
-        windowsHide: true,
-        shell: true,
-      }).trim();
-      if (ver.includes("3.")) {
-        log("INFO", `Found Python: ${cmd} → ${ver}`);
-        return cmd;
+/**
+ * Given a pip executable path, resolve the Python interpreter it belongs to.
+ * e.g. /usr/bin/pip3 → /usr/bin/python3
+ */
+function pythonFromPip(pipPath) {
+  try {
+    // Ask pip's Python to print its own executable path
+    const out = execSync(`"${pipPath}" --version`, {
+      encoding: "utf-8",
+      timeout: 8000,
+      windowsHide: true,
+      shell: true,
+    }).trim();
+    // pip output: "pip X.Y.Z from /path/to/site-packages/pip (python 3.X)"
+    // Extract the site-packages path and derive the Python binary from it
+    const match = out.match(/from (.+?)\/pip\s/);
+    if (match) {
+      // e.g. /home/user/anaconda3/lib/python3.12/site-packages
+      // walk up to find the Python binary
+      let dir = path.dirname(match[1]); // …/python3.12
+      dir = path.dirname(dir);           // …/lib
+      dir = path.dirname(dir);           // …/anaconda3 (prefix)
+      const candidates = [
+        path.join(dir, "bin", "python3"),
+        path.join(dir, "bin", "python"),
+        path.join(dir, "python3.exe"),
+        path.join(dir, "python.exe"),
+      ];
+      for (const c of candidates) {
+        if (fs.existsSync(c)) {
+          log("INFO", `Resolved python from pip: ${c}`);
+          return c;
+        }
       }
-    } catch {}
-  }
-  log("ERROR", "Python 3 not found on PATH");
+    }
+  } catch {}
   return null;
 }
 
 /**
- * Returns the best available pip invocation for the given pythonCmd.
- * Priority: `python -m pip`  >  `pip3`  >  `pip`
- * On systems where pip is missing, attempts to bootstrap it via ensurepip.
+ * Find the best (python, pip) pair available on this system.
+ *
+ * Strategy (in order of priority):
+ *  1. python3/python that already has `python -m pip` working
+ *  2. Standalone pip3/pip binary — derive the matching Python from it
+ *  3. python3/python without pip — try ensurepip bootstrap
+ *
+ * Returns { pythonCmd, pipInfo: { cmd, args } } or null.
  */
-function findPip(pythonCmd) {
-  // Always prefer `pythonCmd -m pip` — guarantees the same Python is used
-  try {
-    execSync(`"${pythonCmd}" -m pip --version`, {
-      encoding: "utf-8",
-      timeout: 10000,
-      windowsHide: true,
-      shell: true,
-    });
-    log("INFO", `pip found via: ${pythonCmd} -m pip`);
-    return { cmd: pythonCmd, args: ["-m", "pip"] };
-  } catch {}
+function findPythonAndPip() {
+  const isWin = process.platform === "win32";
+  const isMac = process.platform === "darwin";
 
-  // Try to bootstrap pip with ensurepip
-  log("WARN", "pip not found — attempting ensurepip bootstrap...");
-  try {
-    execSync(`"${pythonCmd}" -m ensurepip --upgrade`, {
-      encoding: "utf-8",
-      timeout: 30000,
-      windowsHide: true,
-      shell: true,
-    });
-    // Re-check
-    execSync(`"${pythonCmd}" -m pip --version`, {
-      encoding: "utf-8",
-      timeout: 10000,
-      windowsHide: true,
-      shell: true,
-    });
-    log("INFO", "pip bootstrapped via ensurepip");
-    return { cmd: pythonCmd, args: ["-m", "pip"] };
-  } catch {}
+  // ── Candidate Python commands, ordered best-first ──
+  const pythonCandidates = isWin
+    ? ["python", "python3", "py"]
+    : isMac
+    ? [
+        "/opt/homebrew/bin/python3",  // Apple Silicon Homebrew (has pip)
+        "/usr/local/bin/python3",      // Intel Homebrew
+        "python3",
+        "python",
+      ]
+    : [
+        // Linux: DO NOT lead with /usr/bin/python3 — it often has no pip
+        // Let PATH resolution find the right one first (e.g. pyenv, user install)
+        "python3",
+        "python",
+        "/usr/bin/python3",
+      ];
 
-  log("ERROR", "Could not locate or bootstrap pip");
+  const execOpts = { encoding: "utf-8", timeout: 8000, windowsHide: true, shell: true };
+
+  // ── Pass 1: find a Python that already has pip ──
+  for (const cmd of pythonCandidates) {
+    try {
+      const ver = execSync(`"${cmd}" --version`, execOpts).trim();
+      if (!ver.includes("3.")) continue;
+
+      // Does this Python have pip?
+      try {
+        execSync(`"${cmd}" -m pip --version`, execOpts);
+        log("INFO", `Found Python+pip: ${cmd} → ${ver}`);
+        return { pythonCmd: cmd, pipInfo: { cmd, args: ["-m", "pip"] } };
+      } catch {}
+    } catch {}
+  }
+
+  // ── Pass 2: find a pip3/pip binary and resolve its Python ──
+  const pipCandidates = isWin ? ["pip", "pip3"] : ["pip3", "pip"];
+  for (const pipCmd of pipCandidates) {
+    const pipPath = resolveCommandPath(pipCmd);
+    if (!pipPath) continue;
+
+    try {
+      execSync(`"${pipPath}" --version`, execOpts);
+    } catch {
+      continue;
+    }
+
+    // Try to run packages via this pip directly (it installs into its own Python)
+    // Also figure out the matching python binary
+    const derivedPython = pythonFromPip(pipPath);
+
+    if (derivedPython) {
+      try {
+        const ver = execSync(`"${derivedPython}" --version`, execOpts).trim();
+        if (ver.includes("3.")) {
+          log("INFO", `Using pip at ${pipPath}, python: ${derivedPython} → ${ver}`);
+          return { pythonCmd: derivedPython, pipInfo: { cmd: derivedPython, args: ["-m", "pip"] } };
+        }
+      } catch {}
+    }
+
+    // Fallback: use pip binary directly but we still need a matching python.
+    // Try to find python3/python that this pip's site-packages will be on.
+    // Last resort: just use pip binary for install, use best python for running.
+    for (const cmd of pythonCandidates) {
+      try {
+        const ver = execSync(`"${cmd}" --version`, execOpts).trim();
+        if (ver.includes("3.")) {
+          log("WARN", `Using pip at ${pipPath} with python ${cmd} (may mismatch — fallback)`);
+          return { pythonCmd: cmd, pipInfo: { cmd: pipPath, args: [] } };
+        }
+      } catch {}
+    }
+  }
+
+  // ── Pass 3: Python without pip — try ensurepip bootstrap ──
+  for (const cmd of pythonCandidates) {
+    try {
+      const ver = execSync(`"${cmd}" --version`, execOpts).trim();
+      if (!ver.includes("3.")) continue;
+
+      log("WARN", `Trying ensurepip bootstrap for ${cmd}...`);
+      execSync(`"${cmd}" -m ensurepip --upgrade`, { ...execOpts, timeout: 30000 });
+      execSync(`"${cmd}" -m pip --version`, execOpts);
+      log("INFO", `pip bootstrapped via ensurepip for ${cmd}`);
+      return { pythonCmd: cmd, pipInfo: { cmd, args: ["-m", "pip"] } };
+    } catch {}
+  }
+
+  log("ERROR", "Could not find a usable Python+pip combination");
   return null;
+}
+
+// Thin wrappers kept for call-site compatibility
+function findPython() {
+  const result = findPythonAndPip();
+  return result ? result.pythonCmd : null;
+}
+function findPip(pythonCmd) {
+  // If called with a specific pythonCmd, just check if that Python has pip
+  try {
+    execSync(`"${pythonCmd}" -m pip --version`, {
+      encoding: "utf-8", timeout: 8000, windowsHide: true, shell: true,
+    });
+    return { cmd: pythonCmd, args: ["-m", "pip"] };
+  } catch {
+    return null;
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -184,21 +284,25 @@ const REQUIRED_PACKAGES = [
 /**
  * Check which Python packages are missing and install them.
  * Shows a progress dialog while installing.
- * Returns true if all deps are satisfied, false on failure.
+ * Returns { ok: true, pythonCmd } or { ok: false }.
  */
-async function ensureDependencies(pythonCmd) {
-  // ── Locate pip first ──
-  const pipInfo = findPip(pythonCmd);
-  if (!pipInfo) {
+async function ensureDependencies() {
+  // ── Find a working Python+pip pair ──
+  const found = findPythonAndPip();
+  if (!found) {
     dialog.showErrorBox(
-      "pip Not Found",
-      `Could not find pip for Python at: ${pythonCmd}\n\n` +
-        "On Linux, try:  sudo apt install python3-pip\n" +
-        "On macOS, try:  python3 -m ensurepip --upgrade\n" +
-        "On Windows, reinstall Python from https://python.org",
+      "Python / pip Not Found",
+      "Halftone Studio needs Python 3 with pip.\n\n" +
+        "On Linux:   sudo apt install python3 python3-pip\n" +
+        "On macOS:   brew install python3  (or install from python.org)\n" +
+        "On Windows: install Python from https://python.org\n\n" +
+        "After installing, restart the app.",
     );
-    return false;
+    return { ok: false };
   }
+
+  const { pythonCmd, pipInfo } = found;
+  log("INFO", `Using Python: ${pythonCmd}, pip: ${pipInfo.cmd} ${pipInfo.args.join(" ")}`);
 
   // ── Write a temp check script ──
   const checkPy = path.join(app.getPath("temp"), "halftone_check_deps.py");
@@ -230,7 +334,7 @@ async function ensureDependencies(pythonCmd) {
 
   if (missing.length === 0) {
     log("INFO", "All Python dependencies satisfied");
-    return true;
+    return { ok: true, pythonCmd };
   }
 
   const pipNames = missing.map((p) => p.pipName);
@@ -346,37 +450,24 @@ async function ensureDependencies(pythonCmd) {
         "Please run manually:\n  " +
         hint,
     );
-    return false;
+    return { ok: false };
   }
 
   log("INFO", "All dependencies installed successfully");
-  return true;
+  return { ok: true, pythonCmd };
 }
 
 async function startBridge() {
-  const pythonCmd = findPython();
-  if (!pythonCmd) {
-    dialog.showErrorBox(
-      "Python Not Found",
-      "Halftone Studio requires Python 3.9+ installed on your system.\n\n" +
-        "Please install Python from https://python.org and try again.\n" +
-        "Make sure to check 'Add Python to PATH' during installation.",
-    );
+  // ensureDependencies now handles Python+pip discovery internally
+  const deps = await ensureDependencies();
+  if (!deps.ok) {
     app.quit();
     return;
   }
 
-  // Ensure Python packages are installed
-  const depsOk = await ensureDependencies(pythonCmd);
-  if (!depsOk) {
-    app.quit();
-    return;
-  }
+  const pythonCmd = deps.pythonCmd;
 
-  log(
-    "INFO",
-    `Starting bridge: ${pythonCmd} cli_bridge.py  (cwd: ${backendDir})`,
-  );
+  log("INFO", `Starting bridge: ${pythonCmd} cli_bridge.py  (cwd: ${backendDir})`);
 
   // On macOS/Linux, PATH inside the spawned process may not include the user's
   // shell PATH (Electron launches without a login shell). Inherit the full PATH
