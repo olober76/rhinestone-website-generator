@@ -139,7 +139,7 @@ def place_dots_poisson(
     min_spacing = params.min_spacing
     dens_mult   = params.density
     sizing_mode = getattr(params, 'sizing_mode', 'variable')
-    k = 20  # candidates per active point
+    k = 12  # candidates per active point (lower = faster)
 
     # Use minimum possible spacing for the grid cell size
     min_possible_sp = min_spacing * 0.5
@@ -151,8 +151,8 @@ def place_dots_poisson(
     dots: List[Dict] = []
     active: list = []
 
-    MAX_DOTS = 15000  # safety limit
-    TIME_LIMIT = 30.0  # seconds
+    MAX_DOTS = 8000  # safety limit
+    TIME_LIMIT = 15.0  # seconds
     start_time = time.time()
 
     def _gi(px, py):
@@ -305,13 +305,13 @@ def place_dots_contour_outline(
     erosion_step = max(2, int(spacing * 0.6))
     current_mask = mask.copy()
 
-    max_rings = 80  # safety limit
+    max_rings = 40  # safety limit
     ring = 0
-    MAX_DOTS = 15000
+    MAX_DOTS = 8000
     start_time = time.time()
 
     while ring < max_rings:
-        if len(dots) >= MAX_DOTS or (time.time() - start_time) > 20.0:
+        if len(dots) >= MAX_DOTS or (time.time() - start_time) > 10.0:
             break
         # Check there's still shape left
         if cv2.countNonZero(current_mask) < 10:

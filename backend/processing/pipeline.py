@@ -153,18 +153,24 @@ def process_image(raw: bytes, params) -> dict:
     orig_h, orig_w = img.shape[:2]
     logger.info(f"Image decoded: {orig_w}x{orig_h}")
 
-    # Fit into canvas keeping aspect ratio
+    # Fit into canvas keeping aspect ratio — downscale for performance
     cw, ch = params.canvas_width, params.canvas_height
+    # Limit processing resolution to 800px max dimension for speed
+    max_proc = 800
+    proc_scale = min(max_proc / orig_w, max_proc / orig_h, 1.0)
     scale  = min(cw / orig_w, ch / orig_h)
-    new_w, new_h = int(orig_w * scale), int(orig_h * scale)
-    img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    proc_w, proc_h = int(orig_w * min(scale, proc_scale)), int(orig_h * min(scale, proc_scale))
+    img = cv2.resize(img, (proc_w, proc_h), interpolation=cv2.INTER_AREA)
+
+    # We'll scale dots back to canvas coords later
+    final_scale = scale / min(scale, proc_scale)
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     gray = cv2.GaussianBlur(gray, (5, 5), 0)
 
     mask    = _detect_foreground(gray, invert=params.invert)
-    fg_pct = cv2.countNonZero(mask) / (new_w * new_h) * 100
-    logger.info(f"Foreground mask: {fg_pct:.1f}% of image, resized to {new_w}x{new_h}")
+    fg_pct = cv2.countNonZero(mask) / (proc_w * proc_h) * 100
+    logger.info(f"Foreground mask: {fg_pct:.1f}% of image, processed at {proc_w}x{proc_h}")
 
     density = _build_density_map(gray, mask, params.edge_strength, params.contrast)
     logger.info(f"Density map built in {time.time() - t0:.2f}s")
@@ -188,6 +194,13 @@ def process_image(raw: bytes, params) -> dict:
         dots = _merge_dots(edge_dots, dots, min_dist=params.min_spacing * 0.65)
         logger.info(f"Contour merge: {len(dots)} total dots in {time.time() - t2:.2f}s")
 
+    # Scale dots back to canvas coordinates if we downscaled for processing
+    if final_scale > 1.001:
+        for d in dots:
+            d["x"] = round(d["x"] * final_scale, 2)
+            d["y"] = round(d["y"] * final_scale, 2)
+            d["r"] = round(d["r"] * final_scale, 2)
+
     # Assign random shapes when dot_shape == "random"
     dot_shape = getattr(params, 'dot_shape', 'circle')
     if dot_shape == "random":
@@ -195,12 +208,14 @@ def process_image(raw: bytes, params) -> dict:
         for d in dots:
             d["shape"] = random.choice(shape_choices)
 
+    final_w = int(orig_w * scale)
+    final_h = int(orig_h * scale)
     logger.info(f"Total processing: {len(dots)} dots in {time.time() - t0:.2f}s")
 
     return {
         "dots": dots,
-        "image_width": new_w,
-        "image_height": new_h,
+        "image_width": final_w,
+        "image_height": final_h,
     }
 
 
