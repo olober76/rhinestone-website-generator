@@ -10,14 +10,8 @@ export default function CanvasSetup() {
   const createCanvas = useStore((s) => s.createCanvas);
 
   const handleNewProject = () => {
-    // Compute a square canvas that fits the available viewport
-    // Leave room for header (56px), sidebars, and padding
-    const availW = window.innerWidth - 320 - 288 - 64; // minus left sidebar, right sidebar, padding
-    const availH = window.innerHeight - 56 - 64; // minus header and padding
-    const size = Math.max(400, Math.min(availW, availH));
-    // Round to nearest 100 for clean numbers
-    const rounded = Math.round(size / 100) * 100;
-    createCanvas(Math.max(400, rounded));
+    // Fixed 1000×1000 canvas
+    createCanvas(1000);
   };
 
   return (

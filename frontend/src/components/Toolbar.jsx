@@ -62,7 +62,7 @@ export default function Toolbar() {
       {/* Zoom */}
       <button
         className="p-2 rounded-lg bg-surface-lighter text-gray-400 hover:text-white transition"
-        onClick={() => setZoom(Math.max(0.1, zoom - 0.2))}
+        onClick={() => setZoom(Math.max(1, zoom - 0.2))}
         title="Zoom out"
       >
         <ZoomOut className="w-4 h-4" />
