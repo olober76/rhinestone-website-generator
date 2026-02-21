@@ -56,8 +56,8 @@ const useStore = create((set, get) => ({
   // Canvas setup
   // ═══════════════════════════════════════════════════════════════
   canvasCreated: false,
-  canvasWidth: 800,
-  canvasHeight: 800,
+  canvasWidth: 1000,
+  canvasHeight: 1000,
 
   createCanvas: (size) =>
     set({ canvasCreated: true, canvasWidth: size, canvasHeight: size }),
@@ -66,8 +66,8 @@ const useStore = create((set, get) => ({
     _layerCounter = 0;
     set({
       canvasCreated: false,
-      canvasWidth: 800,
-      canvasHeight: 800,
+      canvasWidth: 1000,
+      canvasHeight: 1000,
       layers: [],
       selectedLayerId: null,
       history: [],
