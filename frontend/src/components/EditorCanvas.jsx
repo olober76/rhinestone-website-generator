@@ -109,11 +109,15 @@ export default function EditorCanvas() {
   const tool = useStore((s) => s.tool);
   const pushHistory = useStore((s) => s.pushHistory);
 
-  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [pan, _setPan] = useState({ x: 0, y: 0 });
   const panRef = useRef(pan);
-  useEffect(() => {
-    panRef.current = pan;
-  }, [pan]);
+  // Synchronous pan updater — keeps panRef always current
+  // (useEffect would be too late for rapid wheel events)
+  const setPan = useCallback((v) => {
+    const next = typeof v === "function" ? v(panRef.current) : v;
+    panRef.current = next;
+    _setPan(next);
+  }, []);
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
 
@@ -412,7 +416,8 @@ export default function EditorCanvas() {
       const newPanX = mx - (mx - curPan.x) * (next / cur);
       const newPanY = my - (my - curPan.y) * (next / cur);
 
-      setPan({ x: newPanX, y: newPanY });
+      panRef.current = { x: newPanX, y: newPanY };
+      _setPan({ x: newPanX, y: newPanY });
       state.setZoom(next);
     };
     el.addEventListener("wheel", handler, { passive: false });
