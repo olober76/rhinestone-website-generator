@@ -316,6 +316,137 @@ const REQUIRED_PACKAGES = [
 ];
 
 /**
+ * macOS only: ensure libcairo is installed via Homebrew.
+ * cairosvg is a Python wrapper around the native libcairo C library.
+ * Without it, cairosvg imports successfully but crashes at runtime.
+ *
+ * Checks: `brew list cairo`
+ * If missing and Homebrew is available: runs `brew install cairo` with a progress window.
+ * If Homebrew itself is missing: shows an info dialog (SVG export still works).
+ *
+ * Returns true if cairo is available (or we managed to install it), false otherwise.
+ */
+async function ensureCairoMac() {
+  if (process.platform !== "darwin") return true;
+
+  // Check if cairo is already installed
+  try {
+    execSync("brew list cairo", {
+      encoding: "utf-8", timeout: 10000, windowsHide: true, shell: true,
+    });
+    log("INFO", "macOS: libcairo already installed via Homebrew");
+    return true;
+  } catch {
+    // Not installed — continue
+  }
+
+  // Check if Homebrew is available at all
+  const brewPath = resolveCommandPath("brew") ||
+    (fs.existsSync("/opt/homebrew/bin/brew") ? "/opt/homebrew/bin/brew" : null) ||
+    (fs.existsSync("/usr/local/bin/brew") ? "/usr/local/bin/brew" : null);
+
+  if (!brewPath) {
+    log("WARN", "macOS: Homebrew not found — skipping cairo install");
+    dialog.showMessageBoxSync({
+      type: "warning",
+      title: "Optional: Install libcairo for PNG/JPG Export",
+      message:
+        "Homebrew is not installed on this Mac.\n\n" +
+        "SVG export works without any extra setup.\n\n" +
+        "To enable PNG/JPG export, install Homebrew first:\n" +
+        "  https://brew.sh\n\n" +
+        "Then run:  brew install cairo",
+      buttons: ["OK"],
+    });
+    return false;
+  }
+
+  // Ask the user before installing (brew install takes ~30 seconds)
+  const choice = dialog.showMessageBoxSync({
+    type: "question",
+    title: "Install libcairo for PNG/JPG Export?",
+    message:
+      "Halftone Studio uses libcairo to export PNG and JPG files.\n\n" +
+      "It is not installed on your Mac yet.\n" +
+      "We can install it now via Homebrew (this takes about 30 seconds).\n\n" +
+      "SVG export works without it — you can skip this.",
+    buttons: ["Install cairo via Homebrew", "Skip (SVG only)"],
+    defaultId: 0,
+    cancelId: 1,
+  });
+
+  if (choice !== 0) {
+    log("INFO", "macOS: user skipped cairo install");
+    return false;
+  }
+
+  // Show progress window
+  let cairoWin = new BrowserWindow({
+    width: 480,
+    height: 200,
+    frame: false,
+    resizable: false,
+    alwaysOnTop: true,
+    transparent: false,
+    backgroundColor: "#1a1a2e",
+    webPreferences: { nodeIntegration: false, contextIsolation: true },
+    show: true,
+    skipTaskbar: true,
+  });
+  cairoWin.loadURL(
+    `data:text/html;charset=utf-8,${encodeURIComponent(`
+    <html><body style="margin:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+      height:100vh;background:#1a1a2e;color:#e0e0e0;font-family:system-ui;user-select:none">
+      <div style="width:44px;height:44px;border:3px solid #333;border-top:3px solid #7c3aed;
+        border-radius:50%;animation:spin 1s linear infinite;margin-bottom:20px"></div>
+      <div style="font-size:15px;font-weight:600;margin-bottom:8px">Installing libcairo…</div>
+      <div style="font-size:12px;color:#888;text-align:center;max-width:380px;line-height:1.5">
+        Running: brew install cairo</div>
+      <div style="font-size:11px;color:#555;margin-top:14px">This only happens once (~30 sec)</div>
+      <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
+    </body></html>
+  `)}`,
+  );
+  await new Promise((r) => setTimeout(r, 500));
+
+  log("INFO", `macOS: running ${brewPath} install cairo`);
+  const installed = await new Promise((resolve) => {
+    const proc = spawn(brewPath, ["install", "cairo"], {
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      shell: false,
+    });
+    proc.stdout.on("data", (d) => log("BREW", d.toString().trim()));
+    proc.stderr.on("data", (d) => log("BREW:ERR", d.toString().trim()));
+    proc.on("error", (err) => { log("ERROR", "brew spawn error:", err.message); resolve(false); });
+    proc.on("close", (code) => {
+      log(code === 0 ? "INFO" : "ERROR", `brew install cairo exited ${code}`);
+      resolve(code === 0);
+    });
+  });
+
+  if (cairoWin && !cairoWin.isDestroyed()) cairoWin.close();
+  cairoWin = null;
+
+  if (installed) {
+    log("INFO", "macOS: libcairo installed successfully");
+  } else {
+    log("WARN", "macOS: brew install cairo failed — PNG/JPG export may not work");
+    dialog.showMessageBoxSync({
+      type: "warning",
+      title: "libcairo Installation Failed",
+      message:
+        "brew install cairo did not complete successfully.\n\n" +
+        "SVG export still works fine.\n\n" +
+        "To enable PNG/JPG export, run manually in Terminal:\n" +
+        "  brew install cairo",
+      buttons: ["OK"],
+    });
+  }
+  return installed;
+}
+
+/**
  * Check which Python packages are missing and install them.
  * Shows a progress dialog while installing.
  * Returns { ok: true, pythonCmd } or { ok: false }.
@@ -368,6 +499,9 @@ async function ensureDependencies() {
 
   if (missing.length === 0) {
     log("INFO", "All Python dependencies satisfied");
+    // macOS: even if cairosvg pip package is installed, libcairo (the native C
+    // library) may still be missing. Check and offer to install via Homebrew.
+    await ensureCairoMac();
     return { ok: true, pythonCmd };
   }
 
@@ -488,6 +622,13 @@ async function ensureDependencies() {
   }
 
   log("INFO", "All dependencies installed successfully");
+
+  // ── macOS: ensure libcairo is present for cairosvg PNG/JPG export ──
+  // (only runs if cairosvg was among the packages we needed to install)
+  if (process.platform === "darwin" && pipNames.includes("cairosvg")) {
+    await ensureCairoMac();
+  }
+
   return { ok: true, pythonCmd };
 }
 
