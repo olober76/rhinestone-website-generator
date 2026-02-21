@@ -728,6 +728,7 @@ export default function EditorCanvas() {
           width={cw}
           height={ch}
           viewBox={`0 0 ${cw} ${ch}`}
+          overflow="visible"
           onMouseDown={handleSvgMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
