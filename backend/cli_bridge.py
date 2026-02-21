@@ -25,20 +25,27 @@ import traceback
 import os
 import logging
 
-# ── File logger (writes to halftone-bridge.log next to cli_bridge.py) ──
-_log_dir = os.path.dirname(os.path.abspath(__file__))
-_log_file = os.path.join(_log_dir, "halftone-bridge.log")
+# ── File logger ──
+# Write to home dir — the script runs from inside a read-only AppImage
+# mount on Linux, so we cannot write next to __file__.
+import pathlib
+_log_file = pathlib.Path.home() / "halftone-bridge.log"
+# Rotate if > 2 MB
+if _log_file.exists() and _log_file.stat().st_size > 2 * 1024 * 1024:
+    _log_file.replace(_log_file.with_suffix(".log.old"))
+
 logging.basicConfig(
     level=logging.DEBUG,
     format="[%(asctime)s] [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler(_log_file, encoding="utf-8"),
+        logging.FileHandler(str(_log_file), encoding="utf-8"),
+        logging.StreamHandler(sys.stderr),   # also forward to Electron stderr capture
     ],
 )
 logger = logging.getLogger("bridge")
 logger.info("=" * 50)
 logger.info("Halftone Studio CLI Bridge starting")
-logger.info("Python %s  |  cwd: %s", sys.version.split()[0], os.getcwd())
+logger.info("Python %s  |  cwd: %s  |  log: %s", sys.version.split()[0], os.getcwd(), _log_file)
 
 from processing.pipeline import process_image
 from processing.svg_generator import dots_to_svg_string
