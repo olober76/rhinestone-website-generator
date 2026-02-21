@@ -85,16 +85,35 @@ function saveSettings(s) {
 
 // ── Find Python 3 ──
 function findPython() {
-  const candidates =
-    process.platform === "win32"
-      ? ["python", "python3", "py"]
-      : ["python3", "python"];
+  // Build a list of candidate commands to try, most-specific first
+  const candidates = [];
+
+  if (process.platform === "win32") {
+    candidates.push("python", "python3", "py");
+  } else if (process.platform === "darwin") {
+    // Prefer Homebrew / pyenv / conda installs over the macOS stub
+    candidates.push(
+      "/opt/homebrew/bin/python3",   // Apple Silicon Homebrew
+      "/usr/local/bin/python3",       // Intel Homebrew
+      "python3",
+      "python",
+    );
+  } else {
+    // Linux: prefer user-installed over system stub
+    candidates.push(
+      "/usr/bin/python3",
+      "python3",
+      "python",
+    );
+  }
+
   for (const cmd of candidates) {
     try {
-      const ver = execSync(`${cmd} --version`, {
+      const ver = execSync(`"${cmd}" --version`, {
         encoding: "utf-8",
         timeout: 5000,
         windowsHide: true,
+        shell: true,
       }).trim();
       if (ver.includes("3.")) {
         log("INFO", `Found Python: ${cmd} → ${ver}`);
@@ -103,6 +122,48 @@ function findPython() {
     } catch {}
   }
   log("ERROR", "Python 3 not found on PATH");
+  return null;
+}
+
+/**
+ * Returns the best available pip invocation for the given pythonCmd.
+ * Priority: `python -m pip`  >  `pip3`  >  `pip`
+ * On systems where pip is missing, attempts to bootstrap it via ensurepip.
+ */
+function findPip(pythonCmd) {
+  // Always prefer `pythonCmd -m pip` — guarantees the same Python is used
+  try {
+    execSync(`"${pythonCmd}" -m pip --version`, {
+      encoding: "utf-8",
+      timeout: 10000,
+      windowsHide: true,
+      shell: true,
+    });
+    log("INFO", `pip found via: ${pythonCmd} -m pip`);
+    return { cmd: pythonCmd, args: ["-m", "pip"] };
+  } catch {}
+
+  // Try to bootstrap pip with ensurepip
+  log("WARN", "pip not found — attempting ensurepip bootstrap...");
+  try {
+    execSync(`"${pythonCmd}" -m ensurepip --upgrade`, {
+      encoding: "utf-8",
+      timeout: 30000,
+      windowsHide: true,
+      shell: true,
+    });
+    // Re-check
+    execSync(`"${pythonCmd}" -m pip --version`, {
+      encoding: "utf-8",
+      timeout: 10000,
+      windowsHide: true,
+      shell: true,
+    });
+    log("INFO", "pip bootstrapped via ensurepip");
+    return { cmd: pythonCmd, args: ["-m", "pip"] };
+  } catch {}
+
+  log("ERROR", "Could not locate or bootstrap pip");
   return null;
 }
 
@@ -126,7 +187,20 @@ const REQUIRED_PACKAGES = [
  * Returns true if all deps are satisfied, false on failure.
  */
 async function ensureDependencies(pythonCmd) {
-  // Write a temp check script (avoids quoting issues on Windows)
+  // ── Locate pip first ──
+  const pipInfo = findPip(pythonCmd);
+  if (!pipInfo) {
+    dialog.showErrorBox(
+      "pip Not Found",
+      `Could not find pip for Python at: ${pythonCmd}\n\n` +
+        "On Linux, try:  sudo apt install python3-pip\n" +
+        "On macOS, try:  python3 -m ensurepip --upgrade\n" +
+        "On Windows, reinstall Python from https://python.org",
+    );
+    return false;
+  }
+
+  // ── Write a temp check script ──
   const checkPy = path.join(app.getPath("temp"), "halftone_check_deps.py");
   const scriptLines = REQUIRED_PACKAGES.map(
     (p) =>
@@ -136,19 +210,18 @@ async function ensureDependencies(pythonCmd) {
 
   let checkOutput;
   try {
-    checkOutput = execSync(`${pythonCmd} "${checkPy}"`, {
+    checkOutput = execSync(`"${pythonCmd}" "${checkPy}"`, {
       encoding: "utf-8",
       timeout: 30000,
       windowsHide: true,
+      shell: true,
       cwd: backendDir,
     });
     log("INFO", "Dependency check output:", checkOutput.trim());
   } catch (e) {
     log("ERROR", "Dependency check script failed:", e.message);
-    // Fallback: try installing everything
-    checkOutput = REQUIRED_PACKAGES.map((p) => `miss:${p.importName}`).join(
-      "\n",
-    );
+    // Fallback: assume all missing
+    checkOutput = REQUIRED_PACKAGES.map((p) => `miss:${p.importName}`).join("\n");
   }
 
   const missing = REQUIRED_PACKAGES.filter((p) =>
@@ -163,75 +236,115 @@ async function ensureDependencies(pythonCmd) {
   const pipNames = missing.map((p) => p.pipName);
   log("INFO", `Missing packages: ${pipNames.join(", ")}  — installing...`);
 
-  // Show a non-blocking progress window
+  // ── Show progress window ──
   let progressWin = new BrowserWindow({
-    width: 450,
-    height: 200,
+    width: 480,
+    height: 220,
     frame: false,
     resizable: false,
     alwaysOnTop: true,
     transparent: false,
     backgroundColor: "#1a1a2e",
     webPreferences: { nodeIntegration: false, contextIsolation: true },
+    // On Linux show: without this the window may not appear at all
+    show: true,
+    skipTaskbar: true,
   });
   progressWin.loadURL(
     `data:text/html;charset=utf-8,${encodeURIComponent(`
     <html><body style="margin:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
       height:100vh;background:#1a1a2e;color:#e0e0e0;font-family:system-ui;user-select:none">
-      <div style="width:40px;height:40px;border:3px solid #444;border-top:3px solid #7c3aed;
-        border-radius:50%;animation:spin 1s linear infinite;margin-bottom:18px"></div>
-      <div style="font-size:15px;font-weight:600">Installing Python dependencies...</div>
-      <div style="font-size:12px;color:#888;margin-top:8px">${pipNames.join(", ")}</div>
-      <div style="font-size:11px;color:#666;margin-top:12px">This only happens once</div>
+      <div style="width:44px;height:44px;border:3px solid #333;border-top:3px solid #7c3aed;
+        border-radius:50%;animation:spin 1s linear infinite;margin-bottom:20px"></div>
+      <div style="font-size:15px;font-weight:600;margin-bottom:8px">Installing Python dependencies…</div>
+      <div style="font-size:12px;color:#888;text-align:center;max-width:380px;line-height:1.5">${pipNames.join(", ")}</div>
+      <div style="font-size:11px;color:#555;margin-top:14px">This only happens once</div>
       <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
     </body></html>
   `)}`,
   );
+  // Force the window to paint before we block on the install
+  await new Promise((r) => setTimeout(r, 600));
 
-  // Use spawn (array args — no shell quoting issues with spaces in paths)
-  const pipArgs = ["-m", "pip", "install", "--quiet", ...pipNames];
-  log("INFO", `pip command: ${pythonCmd} ${pipArgs.join(" ")}`);
+  // ── Build pip install args ──
+  // On Linux/macOS we may need --break-system-packages (PEP 668 / externally-managed env)
+  // or fall back to --user if that fails.
+  const buildPipInstallArgs = (extraFlags = []) => [
+    ...pipInfo.args,
+    "install",
+    "--quiet",
+    ...extraFlags,
+    ...pipNames,
+  ];
 
-  const ok = await new Promise((resolve) => {
-    const pip = spawn(pythonCmd, pipArgs, {
-      cwd: backendDir,
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
+  const runPip = (args) =>
+    new Promise((resolve) => {
+      const pip = spawn(pipInfo.cmd, args, {
+        cwd: backendDir,
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        shell: false,
+      });
+
+      let stderr = "";
+      pip.stdout.on("data", (d) => log("PIP", d.toString().trim()));
+      pip.stderr.on("data", (d) => {
+        const s = d.toString().trim();
+        stderr += s + "\n";
+        log("PIP:ERR", s);
+      });
+
+      pip.on("error", (err) => {
+        log("ERROR", "pip spawn error:", err.message);
+        resolve({ success: false, error: err.message });
+      });
+
+      pip.on("close", (code) => {
+        if (code === 0) {
+          log("INFO", "pip install succeeded (exit 0)");
+          resolve({ success: true });
+        } else {
+          log("ERROR", `pip install failed (exit ${code}), stderr: ${stderr.slice(0, 400)}`);
+          resolve({ success: false, error: stderr });
+        }
+      });
     });
 
-    let stderr = "";
-    pip.stdout.on("data", (d) => log("PIP", d.toString().trim()));
-    pip.stderr.on("data", (d) => {
-      const s = d.toString().trim();
-      stderr += s + "\n";
-      log("PIP:ERR", s);
-    });
+  log("INFO", `pip command: ${pipInfo.cmd} ${buildPipInstallArgs().join(" ")}`);
 
-    pip.on("error", (err) => {
-      log("ERROR", "pip spawn error:", err.message);
-      resolve({ success: false, error: err.message });
-    });
+  // First attempt: plain install
+  let result = await runPip(buildPipInstallArgs());
 
-    pip.on("close", (code) => {
-      if (code === 0) {
-        log("INFO", "pip install succeeded (exit 0)");
-        resolve({ success: true });
-      } else {
-        log("ERROR", `pip install failed (exit ${code})`);
-        resolve({ success: false, error: stderr });
-      }
-    });
-  });
+  // If it fails with "externally-managed" (PEP 668), retry with --break-system-packages
+  if (!result.success && result.error.includes("externally-managed")) {
+    log("WARN", "Retrying pip with --break-system-packages (PEP 668 env)");
+    result = await runPip(buildPipInstallArgs(["--break-system-packages"]));
+  }
+
+  // If still failing, retry with --user
+  if (!result.success) {
+    log("WARN", "Retrying pip with --user flag");
+    result = await runPip(buildPipInstallArgs(["--user"]));
+  }
 
   if (progressWin && !progressWin.isDestroyed()) progressWin.close();
+  progressWin = null;
 
-  if (!ok.success) {
+  if (!result.success) {
+    const isLinux = process.platform === "linux";
+    const isMac = process.platform === "darwin";
+    const hint = isLinux
+      ? "sudo apt install python3-pip\n  then: pip3 install " + pipNames.join(" ")
+      : isMac
+      ? "pip3 install " + pipNames.join(" ")
+      : "pip install " + pipNames.join(" ");
+
     dialog.showErrorBox(
       "Dependency Installation Failed",
       `Could not install required Python packages:\n${pipNames.join(", ")}\n\n` +
-        `Error: ${ok.error}\n\n` +
-        "Please run manually:\n" +
-        `  pip install ${pipNames.join(" ")}`,
+        `Error: ${result.error}\n\n` +
+        "Please run manually:\n  " +
+        hint,
     );
     return false;
   }
@@ -265,9 +378,25 @@ async function startBridge() {
     `Starting bridge: ${pythonCmd} cli_bridge.py  (cwd: ${backendDir})`,
   );
 
+  // On macOS/Linux, PATH inside the spawned process may not include the user's
+  // shell PATH (Electron launches without a login shell). Inherit the full PATH
+  // so that any shared libraries (e.g. Cairo for cairosvg) can be found.
+  const spawnEnv = { ...process.env, PYTHONUNBUFFERED: "1" };
+  if (process.platform !== "win32" && process.env.PATH) {
+    const extraPaths = [
+      "/opt/homebrew/bin",
+      "/usr/local/bin",
+      "/usr/bin",
+      "/bin",
+    ];
+    const existing = process.env.PATH.split(":");
+    const merged = [...new Set([...existing, ...extraPaths])];
+    spawnEnv.PATH = merged.join(":");
+  }
+
   bridgeProcess = spawn(pythonCmd, ["cli_bridge.py"], {
     cwd: backendDir,
-    env: { ...process.env, PYTHONUNBUFFERED: "1" },
+    env: spawnEnv,
     stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true,
   });
