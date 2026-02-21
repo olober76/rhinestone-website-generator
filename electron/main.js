@@ -18,32 +18,68 @@ const backendDir = isDev
   : path.join(process.resourcesPath, "backend");
 
 // ═══════════════════════════════════════════════════════════════════════
-// File Logger — writes to halftone-studio.log in userData
+// File Logger — writes to halftone-studio.log in multiple locations
+// so it's easy to find regardless of platform or packaging mode.
 // ═══════════════════════════════════════════════════════════════════════
 
-const logDir = isDev ? path.join(__dirname, "..") : app.getPath("userData");
+// Resolve log directory safely — app.getPath("userData") needs app to be
+// ready first, so we use os.homedir() as a safe fallback that is always
+// available at module load time.
+const os = require("os");
 
-const logFile = path.join(logDir, "halftone-studio.log");
+function getLogDir() {
+  // During development: write next to package.json root
+  if (isDev) return path.join(__dirname, "..");
+
+  // Packaged: write to the user's home directory so it's always findable.
+  // On Linux:   ~/halftone-studio.log
+  // On macOS:   ~/halftone-studio.log
+  // On Windows: %USERPROFILE%\halftone-studio.log
+  return os.homedir();
+}
+
+const logFile = path.join(getLogDir(), "halftone-studio.log");
+
+// Also write a copy next to the executable (release dir) when packaged,
+// so testers can find it without knowing userData paths.
+const logFileSideCar = app.isPackaged
+  ? path.join(path.dirname(process.execPath), "halftone-studio.log")
+  : null;
+
+function writeToLog(line) {
+  // Primary log (home dir — always writable)
+  try { fs.appendFileSync(logFile, line); } catch {}
+  // Side-car log next to the AppImage / .exe (best-effort)
+  if (logFileSideCar) {
+    try { fs.appendFileSync(logFileSideCar, line); } catch {}
+  }
+}
 
 function initLog() {
-  try {
-    // Rotate if > 2 MB
-    if (fs.existsSync(logFile) && fs.statSync(logFile).size > 2 * 1024 * 1024) {
-      const old = logFile + ".old";
-      if (fs.existsSync(old)) fs.unlinkSync(old);
-      fs.renameSync(logFile, old);
-    }
-    const header =
-      `\n${"=".repeat(60)}\n` +
-      `Halftone Studio — ${new Date().toISOString()}\n` +
-      `Platform: ${process.platform} ${process.arch}\n` +
-      `Electron: ${process.versions.electron}  Node: ${process.versions.node}\n` +
-      `Packaged: ${app.isPackaged}  Backend dir: ${backendDir}\n` +
-      `${"=".repeat(60)}\n`;
-    fs.appendFileSync(logFile, header);
-  } catch (e) {
-    console.error("Failed to init log file:", e.message);
-  }
+  const rotate = (f) => {
+    try {
+      if (fs.existsSync(f) && fs.statSync(f).size > 2 * 1024 * 1024) {
+        const old = f + ".old";
+        if (fs.existsSync(old)) fs.unlinkSync(old);
+        fs.renameSync(f, old);
+      }
+    } catch {}
+  };
+  rotate(logFile);
+  if (logFileSideCar) rotate(logFileSideCar);
+
+  const header =
+    `\n${"=".repeat(60)}\n` +
+    `Halftone Studio — ${new Date().toISOString()}\n` +
+    `Platform: ${process.platform} ${process.arch}\n` +
+    `Electron: ${process.versions.electron}  Node: ${process.versions.node}\n` +
+    `Packaged: ${app.isPackaged}  Backend dir: ${backendDir}\n` +
+    `Log (home): ${logFile}\n` +
+    (logFileSideCar ? `Log (sidecar): ${logFileSideCar}\n` : "") +
+    `${"=".repeat(60)}\n`;
+
+  writeToLog(header);
+  console.log(header);
 }
 
 function log(level, ...args) {
@@ -53,9 +89,7 @@ function log(level, ...args) {
     .join(" ");
   const line = `[${ts}] [${level}] ${msg}\n`;
   console.log(line.trimEnd());
-  try {
-    fs.appendFileSync(logFile, line);
-  } catch {}
+  writeToLog(line);
 }
 
 // ── State ──
@@ -754,6 +788,13 @@ ipcMain.handle("shell:openDirectory", async (_ev, dirPath) => {
 app.whenReady().then(async () => {
   initLog();
   log("INFO", "App ready, starting bridge...");
+  log("INFO", `Log file (home):    ${logFile}`);
+  if (logFileSideCar) log("INFO", `Log file (sidecar): ${logFileSideCar}`);
+
+  // Add an IPC handler so the renderer can open the log file location
+  ipcMain.handle("debug:getLogPath", () => logFile);
+  ipcMain.handle("debug:openLog", () => shell.openPath(path.dirname(logFile)));
+
   await startBridge();
   createWindow();
   app.on("activate", () => {
