@@ -396,25 +396,38 @@ export default function EditorCanvas() {
   );
 
   // ─── Zoom with scroll — zooms toward pointer position ────────
+  // Uses CSS transform scale (not SVG dimension change) so pan+zoom
+  // are always atomic in one CSS property — no render-race drift.
   useEffect(() => {
     const el = viewportRef.current;
     if (!el) return;
     const handler = (e) => {
       e.preventDefault();
       e.stopPropagation();
-      const delta = e.deltaY > 0 ? -0.1 : 0.1;
+
       const state = useStore.getState();
       const cur = state.zoom;
-      const next = Math.max(1, Math.min(5, cur + delta));
+
+      // Multiplicative zoom (like the reference example)
+      const zoomFactor = 1 - e.deltaY / 500;
+      const next = Math.max(1, Math.min(5, cur * zoomFactor));
+      if (next === cur) return;
 
       const rect = el.getBoundingClientRect();
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
       const curPan = panRef.current;
 
-      // Zoom-to-pointer: keep the canvas point under cursor fixed
-      const newPanX = mx - (mx - curPan.x) * (next / cur);
-      const newPanY = my - (my - curPan.y) * (next / cur);
+      // The canvas point under the cursor (in SVG coords):
+      //   canvasX = (mx - pan.x) / curZoom
+      // After zoom we want the same point under the cursor:
+      //   mx = newPan.x + canvasX * nextZoom
+      //   newPan.x = mx - canvasX * nextZoom
+      //            = mx - (mx - pan.x) / curZoom * nextZoom
+      //            = mx - (mx - pan.x) * (nextZoom / curZoom)
+      const ratio = next / cur;
+      const newPanX = mx - (mx - curPan.x) * ratio;
+      const newPanY = my - (my - curPan.y) * ratio;
 
       panRef.current = { x: newPanX, y: newPanY };
       _setPan({ x: newPanX, y: newPanY });
@@ -705,14 +718,15 @@ export default function EditorCanvas() {
         ref={canvasWrapperRef}
         className="canvas-container"
         style={{
-          transform: `translate(${pan.x}px, ${pan.y}px)`,
+          transformOrigin: "0 0",
+          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
           cursor: getCursor(),
         }}
       >
         <svg
           ref={svgRef}
-          width={cw * zoom}
-          height={ch * zoom}
+          width={cw}
+          height={ch}
           viewBox={`0 0 ${cw} ${ch}`}
           onMouseDown={handleSvgMouseDown}
           onMouseMove={handleMouseMove}
