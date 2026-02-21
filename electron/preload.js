@@ -30,4 +30,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke("file:saveAs", filename, dataB64),
   openDirectory: (dirPath) =>
     ipcRenderer.invoke("shell:openDirectory", dirPath),
+
+  // ── Debug / logging ──
+  getLogPath: () => ipcRenderer.invoke("debug:getLogPath"),
+  openLogFolder: () => ipcRenderer.invoke("debug:openLog"),
 });
