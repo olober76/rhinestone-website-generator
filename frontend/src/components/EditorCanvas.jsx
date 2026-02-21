@@ -144,22 +144,21 @@ export default function EditorCanvas() {
     return () => ro.disconnect();
   }, []);
 
-  // ─── Clamp / center pan when zoom or viewport changes ────────
+  // ─── Center canvas when canvas dimensions change ─────────────
   useEffect(() => {
-    if (viewportSize.w <= 0 || viewportSize.h <= 0) return;
+    const el = viewportRef.current;
+    if (!el) return;
+    const vpW = el.clientWidth;
+    const vpH = el.clientHeight;
+    if (vpW <= 0 || vpH <= 0) return;
     const contentW = cw * zoom;
     const contentH = ch * zoom;
-    setPan((prev) => {
-      let x = prev.x,
-        y = prev.y;
-      if (contentW <= viewportSize.w) x = (viewportSize.w - contentW) / 2;
-      else x = Math.min(0, Math.max(viewportSize.w - contentW, x));
-      if (contentH <= viewportSize.h) y = (viewportSize.h - contentH) / 2;
-      else y = Math.min(0, Math.max(viewportSize.h - contentH, y));
-      if (x === prev.x && y === prev.y) return prev;
-      return { x, y };
+    setPan({
+      x: (vpW - contentW) / 2,
+      y: (vpH - contentH) / 2,
     });
-  }, [cw, ch, zoom, viewportSize]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cw, ch]); // Only re-center on canvas dimension change, NOT viewport/zoom
 
   // ─── Compute snap targets from canvas + other layers ─────────
   const getSnapTargets = useCallback(
@@ -287,20 +286,8 @@ export default function EditorCanvas() {
   const handleMouseMove = useCallback(
     (e) => {
       if (isPanning) {
-        let rawX = e.clientX - panStart.x;
-        let rawY = e.clientY - panStart.y;
-        // Clamp pan to keep canvas in view
-        const contentW = cw * zoom;
-        const contentH = ch * zoom;
-        const vp = viewportRef.current;
-        if (vp) {
-          const vpW = vp.clientWidth;
-          const vpH = vp.clientHeight;
-          if (contentW <= vpW) rawX = (vpW - contentW) / 2;
-          else rawX = Math.min(0, Math.max(vpW - contentW, rawX));
-          if (contentH <= vpH) rawY = (vpH - contentH) / 2;
-          else rawY = Math.min(0, Math.max(vpH - contentH, rawY));
-        }
+        const rawX = e.clientX - panStart.x;
+        const rawY = e.clientY - panStart.y;
         setPan({ x: rawX, y: rawY });
         return;
       }
@@ -372,9 +359,6 @@ export default function EditorCanvas() {
       clientToSvg,
       updateLayer,
       applySnap,
-      cw,
-      ch,
-      zoom,
     ],
   );
 
@@ -425,20 +409,8 @@ export default function EditorCanvas() {
       const curPan = panRef.current;
 
       // Zoom-to-pointer: keep the canvas point under cursor fixed
-      let newPanX = mx - (mx - curPan.x) * (next / cur);
-      let newPanY = my - (my - curPan.y) * (next / cur);
-
-      // Clamp / center pan for the new zoom level
-      const curCw = state.canvasWidth;
-      const curCh = state.canvasHeight;
-      const contentW = curCw * next;
-      const contentH = curCh * next;
-      const vpW = rect.width;
-      const vpH = rect.height;
-      if (contentW <= vpW) newPanX = (vpW - contentW) / 2;
-      else newPanX = Math.min(0, Math.max(vpW - contentW, newPanX));
-      if (contentH <= vpH) newPanY = (vpH - contentH) / 2;
-      else newPanY = Math.min(0, Math.max(vpH - contentH, newPanY));
+      const newPanX = mx - (mx - curPan.x) * (next / cur);
+      const newPanY = my - (my - curPan.y) * (next / cur);
 
       setPan({ x: newPanX, y: newPanY });
       state.setZoom(next);
