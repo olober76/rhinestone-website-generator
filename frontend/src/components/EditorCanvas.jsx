@@ -417,7 +417,7 @@ export default function EditorCanvas() {
       const delta = e.deltaY > 0 ? -0.1 : 0.1;
       const state = useStore.getState();
       const cur = state.zoom;
-      const next = Math.max(0.1, Math.min(5, cur + delta));
+      const next = Math.max(1, Math.min(5, cur + delta));
 
       const rect = el.getBoundingClientRect();
       const mx = e.clientX - rect.left;
